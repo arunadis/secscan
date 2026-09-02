@@ -1,0 +1,238 @@
+{
+  "registry_version": 1,
+  "_doc": [
+    "External security-tool registry (feature 008, FR-001) — versioned data.",
+    "Adding or updating a tool MUST stay a data change; edit entries here and",
+    "extend the contract test only when the entry *shape* changes.",
+    "Every invoke block is the pinned read-only invocation (research.md R2):",
+    "{project} = scan root, {out_dir} / {out_file} live in the scanner store,",
+    "{data_dir} is the user-level tool cache — never inside the scanned project."
+  ],
+  "tools": [
+    {
+      "id": "semgrep",
+      "display_name": "Semgrep",
+      "kind": "sast",
+      "ecosystems": ["any"],
+      "covers_ecosystems": [],
+      "project_local": [
+        {
+          "mechanism": "manifest-dep",
+          "manifest": "package.json",
+          "sections": ["dependencies", "devDependencies"],
+          "names": ["semgrep"]
+        }
+      ],
+      "system_executable": "semgrep",
+      "version_probe": ["semgrep", "--version"],
+      "provision_channels": [
+        { "manager": "brew", "argv": ["brew", "install", "semgrep"] },
+        { "manager": "pipx", "argv": ["pipx", "install", "semgrep"] }
+      ],
+      "invoke": {
+        "argv": ["semgrep", "scan", "--json", "--config", "auto", "{project}"],
+        "requires_lockfile": null,
+        "requires_network": true,
+        "report_out": "stdout"
+      },
+      "timeout_s": 120,
+      "report_format": "json",
+      "network": "per-run"
+    },
+    {
+      "id": "gitleaks",
+      "display_name": "Gitleaks",
+      "kind": "secrets",
+      "ecosystems": ["any"],
+      "covers_ecosystems": [],
+      "project_local": [],
+      "system_executable": "gitleaks",
+      "version_probe": ["gitleaks", "version"],
+      "provision_channels": [
+        { "manager": "brew", "argv": ["brew", "install", "gitleaks"] },
+        { "manager": "go", "argv": ["go", "install", "github.com/gitleaks/gitleaks/v8@latest"] }
+      ],
+      "invoke": {
+        "argv": ["gitleaks", "detect", "--source", "{project}", "--no-git", "--report-format", "json", "--report-path", "{out_file}"],
+        "requires_lockfile": null,
+        "requires_network": false,
+        "report_out": "file"
+      },
+      "timeout_s": 120,
+      "report_format": "json",
+      "network": "none"
+    },
+    {
+      "id": "osv-scanner",
+      "display_name": "OSV-Scanner",
+      "kind": "dependency-audit",
+      "ecosystems": ["npm", "pypi", "maven", "go"],
+      "covers_ecosystems": ["npm", "pypi", "maven", "go"],
+      "project_local": [],
+      "system_executable": "osv-scanner",
+      "version_probe": ["osv-scanner", "--version"],
+      "provision_channels": [
+        { "manager": "brew", "argv": ["brew", "install", "osv-scanner"] },
+        { "manager": "go", "argv": ["go", "install", "github.com/google/osv-scanner/cmd/osv-scanner@latest"] }
+      ],
+      "invoke": {
+        "argv": ["osv-scanner", "scan", "--format", "json", "--recursive", "{project}"],
+        "requires_lockfile": null,
+        "requires_network": true,
+        "report_out": "stdout"
+      },
+      "timeout_s": 120,
+      "report_format": "json",
+      "network": "per-run"
+    },
+    {
+      "id": "trivy",
+      "display_name": "Trivy",
+      "kind": "iac",
+      "ecosystems": ["any"],
+      "covers_ecosystems": ["npm", "pypi", "maven", "go"],
+      "project_local": [],
+      "system_executable": "trivy",
+      "version_probe": ["trivy", "--version"],
+      "provision_channels": [
+        { "manager": "brew", "argv": ["brew", "install", "trivy"] }
+      ],
+      "invoke": {
+        "argv": ["trivy", "fs", "--format", "json", "--scanners", "vuln,misconfig,secret", "{project}"],
+        "requires_lockfile": null,
+        "requires_network": true,
+        "report_out": "stdout"
+      },
+      "timeout_s": 120,
+      "report_format": "json",
+      "network": "on-first-use"
+    },
+    {
+      "id": "npm-audit",
+      "display_name": "npm audit",
+      "kind": "dependency-audit",
+      "ecosystems": ["npm"],
+      "covers_ecosystems": ["npm"],
+      "project_local": [],
+      "system_executable": "npm",
+      "version_probe": ["npm", "--version"],
+      "provision_channels": [
+        { "manager": "brew", "argv": ["brew", "install", "node"] }
+      ],
+      "invoke": {
+        "argv": ["npm", "audit", "--json"],
+        "requires_lockfile": "package-lock.json",
+        "requires_network": true,
+        "report_out": "stdout"
+      },
+      "timeout_s": 120,
+      "report_format": "json",
+      "network": "per-run"
+    },
+    {
+      "id": "pip-audit",
+      "display_name": "pip-audit",
+      "kind": "dependency-audit",
+      "ecosystems": ["pypi"],
+      "covers_ecosystems": ["pypi"],
+      "project_local": [
+        {
+          "mechanism": "manifest-dep",
+          "manifest": "requirements-dev.txt",
+          "sections": ["*"],
+          "names": ["pip-audit"]
+        }
+      ],
+      "system_executable": "pip-audit",
+      "version_probe": ["pip-audit", "--version"],
+      "provision_channels": [
+        { "manager": "pipx", "argv": ["pipx", "install", "pip-audit"] }
+      ],
+      "invoke": {
+        "argv": ["pip-audit", "-r", "requirements.txt", "-f", "json"],
+        "requires_lockfile": null,
+        "requires_network": true,
+        "report_out": "stdout"
+      },
+      "timeout_s": 120,
+      "report_format": "json",
+      "network": "per-run"
+    },
+    {
+      "id": "govulncheck",
+      "display_name": "govulncheck",
+      "kind": "dependency-audit",
+      "ecosystems": ["go"],
+      "covers_ecosystems": ["go"],
+      "project_local": [],
+      "system_executable": "govulncheck",
+      "version_probe": ["govulncheck", "-version"],
+      "provision_channels": [
+        { "manager": "go", "argv": ["go", "install", "golang.org/x/vuln/cmd/govulncheck@latest"] }
+      ],
+      "invoke": {
+        "argv": ["govulncheck", "-json", "./..."],
+        "requires_lockfile": null,
+        "requires_network": true,
+        "report_out": "stdout"
+      },
+      "timeout_s": 120,
+      "report_format": "json",
+      "network": "per-run"
+    },
+    {
+      "id": "owasp-dependency-check",
+      "display_name": "OWASP Dependency-Check",
+      "kind": "dependency-audit",
+      "ecosystems": ["maven"],
+      "covers_ecosystems": ["maven"],
+      "project_local": [
+        {
+          "mechanism": "manifest-plugin",
+          "manifest": "pom.xml",
+          "plugin_gav_prefix": "org.owasp:dependency-check-maven",
+          "wrappers": ["mvnw"]
+        },
+        {
+          "mechanism": "manifest-plugin",
+          "manifest": "build.gradle",
+          "plugin_id": "org.owasp.dependencycheck",
+          "wrappers": ["gradlew"]
+        },
+        {
+          "mechanism": "manifest-plugin",
+          "manifest": "build.gradle.kts",
+          "plugin_id": "org.owasp.dependencycheck",
+          "wrappers": ["gradlew"]
+        }
+      ],
+      "system_executable": "dependency-check.sh",
+      "version_probe": ["dependency-check.sh", "--version"],
+      "credential": {
+        "env_var": "NVD_API_KEY",
+        "obtain_url": "https://nvd.nist.gov/developers/request-an-api-key",
+        "absence_impact": "without an NVD API key the NVD data download is heavily rate-limited: the first sync can take many times longer, and rate-limiting can cause intermittent sync failures"
+      },
+      "provision_channels": [
+        { "manager": "brew", "argv": ["brew", "install", "dependency-check"] }
+      ],
+      "invoke": {
+        "argv": ["dependency-check.sh", "--scan", "{project}", "--format", "JSON", "--out", "{out_dir}", "--data", "{data_dir}"],
+        "requires_lockfile": null,
+        "requires_network": true,
+        "report_out": "file",
+        "report_file": "dependency-check-report.json"
+      },
+      "invoke_project": {
+        "argv": ["{wrapper}", "org.owasp:dependency-check-maven:check", "-Dformats=JSON", "-Dodc.outputDirectory={out_dir}gradle-check", "-Ddata.directory={data_dir}"],
+        "requires_lockfile": null,
+        "requires_network": true,
+        "report_out": "file",
+        "report_file": "dependency-check-report.json"
+      },
+      "timeout_s": 300,
+      "report_format": "json",
+      "network": "on-first-use"
+    }
+  ]
+}

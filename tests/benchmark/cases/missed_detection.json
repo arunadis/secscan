@@ -1,0 +1,13 @@
+{
+  "case_id": "missed-detection-reference-scans",
+  "kind": "reviewed-real",
+  "target": "uc-framework-upgrade-monolith-to-microservices, scan 20260831T071644Z-c3b48b",
+  "source_of_truth": "manual verification of the external scanner's extra findings plus reviewer-spotted misses, recorded in cases/must_find.json",
+  "expectations": [
+    {
+      "defect_class": "missed-detection",
+      "assertion": "Every must-find corpus entry (GraphQL depth-DoS, seed-data shared password, CSRF disabled, wildcard CORS, marked ReDoS advisories) is produced by its fixture scan.",
+      "baseline": "feature 004 comparison: 2 verified Devin findings missed, 2 issue classes missed by both scanners, 5 redaction-blocked segments"
+    }
+  ]
+}

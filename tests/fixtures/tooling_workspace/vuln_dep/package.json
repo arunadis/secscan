@@ -1,0 +1,7 @@
+{
+  "name": "vuln-dep-app",
+  "version": "1.0.0",
+  "dependencies": {
+    "rapid-parse": "2.0.0"
+  }
+}

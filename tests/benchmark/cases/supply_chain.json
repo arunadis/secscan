@@ -1,0 +1,13 @@
+{
+  "case_id": "supply-chain-detection-seeded",
+  "kind": "seeded-workspace",
+  "target": "tests/fixtures/llm_workspace/us4_supply_chain/ (vulnerable and hardened variants)",
+  "source_of_truth": "ground truth declared at fixture creation for spec 007 US4; the vulnerable fixture declares an unguarded internal scope and mutable references, the hardened fixture is pinned and registry-mapped and must be silent",
+  "expectations": [
+    {
+      "defect_class": "supply-chain-detection",
+      "assertion": "100% of seeded supply-chain exposures are reported with manifest citations and a recorded guard state; the hardened manifest produces zero supply-chain findings",
+      "baseline": "spec 007 introduction of the category; no prior coverage"
+    }
+  ]
+}

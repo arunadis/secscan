@@ -1,0 +1,119 @@
+---
+name: secscan
+description: >-
+  Perform a hierarchical security assessment of a large codebase or multi-repository
+  workspace while keeping LLM context bounded. Use when the user asks to scan for
+  vulnerabilities, run a security review, audit a repository, triage scanner findings,
+  or check a codebase for security issues.
+license: Apache-2.0
+metadata:
+  version: "0.1.0"
+---
+
+# Security Scan
+
+## Objective
+
+Assess the security of a workspace (one or more repositories) while never loading
+the whole codebase into a single context. Deterministic scripts build the model
+and collect evidence; you reason over small, bounded context packets.
+
+## Rules (non-negotiable)
+
+1. **Never** load the entire repository into context. Work only from the context
+   packets the pipeline gives you.
+2. Prefer references (file#symbol) over pasting unrelated code.
+3. Every finding MUST have evidence — file, symbol, and why it matters.
+4. Every finding MUST have a CWE id from the shipped dataset, a CVSS-style
+   severity score, and a numeric confidence.
+5. Emit **only** JSON conforming to the finding schema. No prose, no commentary,
+   no markdown outside the JSON. Free-form output is rejected by the pipeline.
+6. Do not duplicate findings; do not invent CWE ids.
+7. Cross-segment claims must cite findings from more than one segment.
+8. Never execute attacks against a running system. Verification is static.
+9. Reproduction steps use benign canary values only, contain no real secrets, and
+   target a local/test deployment.
+
+## Workflow
+
+Run each stage in order. Every stage writes durable artifacts under
+`.secscan/`, so an interrupted scan resumes where it stopped — re-invoke
+the scan command to continue.
+
+```
+0. init                    # config + environment check (first run only)
+1. discover_repo           # workspace + per-repo manifests
+2. build_code_graph        # symbols, calls, entry points, data access
+3. partition_repo          # security-boundary segments
+4. build_context           # bounded, redacted context packets
+5. ingest_findings         # external scanner output (when tools present)
+6. SEGMENT ANALYSIS        # <- your reasoning, per packet
+7. normalize_findings      # schema enforcement + CWE/OWASP mapping
+8. verify + reproduce      # static verification, reproduction blocks
+9. correlate_findings      # dedupe, relate, group
+10. SYSTEM REVIEW          # <- your reasoning, cross-segment
+11. generate_report        # unified report + usage summary
+```
+
+Run the pipeline with the scan command (resumes automatically as needed). From
+this skill directory, put `scripts/` on `PYTHONPATH`:
+
+```bash
+export PYTHONPATH="$(dirname "$0")/scripts"          # or the skill's scripts/ path
+python -m pipeline.scan_cli init   --workdir <scan-root>
+python -m pipeline.scan_cli run    --workdir <scan-root> [--profile quick|full|audit] [--full]
+python -m pipeline.scan_cli status --workdir <scan-root>
+python -m pipeline.scan_cli report --workdir <scan-root> [--repo <name>]
+```
+
+If the package is installed globally the same surface is `secscan run ...`.
+
+Exit code 3 from `run` means your reasoning is required — see the next section.
+
+## Your part: segment analysis (step 6)
+
+When the driver needs your reasoning it exits with status 3 and leaves one file
+per pending request in `.secscan/handoff/requests/`. For **each** request:
+
+1. Read `handoff/requests/<request-id>.json`. It contains `prompt` (the analysis
+   instructions) and `context_packet` — purpose, entry points, call-graph summary,
+   data flows, security-relevant symbols, and redacted source excerpts.
+2. Consider only the vulnerability domains in `context_packet.domains`, using the
+   matching guidance in `prompts/segment_scan.md`.
+3. Ask, at the local level: does any single function contain a flaw?
+4. Ask, at the segment level: does the *combination* create a flaw that no single
+   component shows? (controller validates X → service assumes X → repository
+   performs a dangerous operation)
+5. Write your findings JSON to
+   `.secscan/handoff/responses/<request-id>.json` — the same id as the
+   request — conforming to `schemas/finding.json`.
+6. Re-run the scan command. Completed stages are skipped, your answers are
+   consumed, and the scan continues from the checkpoint.
+
+If the evidence in the packet is insufficient for a confident verdict, say so by
+setting `"needs_escalation": true` in your response instead of guessing. The
+pipeline will build a larger packet (next escalation level) and ask again.
+
+Because requests and responses are files, a large scan can span **multiple agent
+sessions**: answer what you can, re-run, repeat.
+
+## Your part: system review (step 10)
+
+Read `.secscan/findings/correlated.json`, `workspace.json`, and
+`code-graph.json` — **not** the source. Look for vulnerabilities that span
+security boundaries:
+
+- an identity minted in one segment/repo and trusted in another under different
+  authorization assumptions;
+- validation performed on one side of an integration but assumed on the other;
+- sensitive data crossing a trust boundary without protection.
+
+Write your conclusions to `.secscan/system-review.md` and any new
+cross-boundary findings (citing evidence from ≥2 segments) as JSON.
+
+## Output contract
+
+The scan produces `.secscan/reports/<scan-id>.md` and `.json` containing an
+executive summary, findings grouped by severity (verified before plausible within
+each band), inline reproduction blocks, attack paths, a coverage statement, and a
+usage/cost summary.

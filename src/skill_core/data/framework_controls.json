@@ -1,0 +1,150 @@
+{
+  "version": "1",
+  "dataset_date": "2026-08-30",
+  "_doc": [
+    "Framework default controls, their sinks, and their documented bypasses",
+    "(FR-021, FR-022-FR-022d). Sourced from research.md A1.",
+    "",
+    "Read `escapes_by_default` carefully: it is NOT true for every framework.",
+    "Jinja2 autoescaping is off unless configured, and JSP `<%= %>` is raw. A",
+    "control may therefore never be credited merely because a framework is present -",
+    "crediting is per framework AND configuration.",
+    "",
+    "A control is credited only when it covers the finding's weakness class, sits on",
+    "the traced path to the sink, has no bypass on that path, and every file on that",
+    "path was parsed. Anything less is 'unassessed', which caps confidence and never",
+    "inflates severity (FR-022a, FR-022c)."
+  ],
+  "frameworks": [
+    {
+      "id": "angular",
+      "name": "Angular",
+      "detect": ["@angular/core", "@angular/platform-browser"],
+      "escapes_by_default": true,
+      "controls": [
+        {
+          "id": "angular-dom-sanitizer",
+          "mitigates": ["CWE-79"],
+          "residual_impact": "The sanitizer strips script elements, event-handler attributes and javascript: URLs, but permits anchors, images and formatting. Content and layout spoofing remain achievable; script execution does not.",
+          "sinks": ["[innerHTML]", "ng-bind-html", "[outerHTML]"],
+          "bypasses": [
+            "bypassSecurityTrustHtml",
+            "bypassSecurityTrustScript",
+            "bypassSecurityTrustStyle",
+            "bypassSecurityTrustUrl",
+            "bypassSecurityTrustResourceUrl"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "react",
+      "name": "React",
+      "detect": ["react", "react-dom"],
+      "escapes_by_default": true,
+      "controls": [
+        {
+          "id": "react-jsx-escaping",
+          "mitigates": ["CWE-79"],
+          "residual_impact": "JSX escapes interpolated text and attribute values. Markup injection is not achievable through ordinary interpolation.",
+          "sinks": ["dangerouslySetInnerHTML"],
+          "bypasses": ["dangerouslySetInnerHTML", ".innerHTML", ".outerHTML", "insertAdjacentHTML"]
+        }
+      ]
+    },
+    {
+      "id": "vue",
+      "name": "Vue",
+      "detect": ["vue"],
+      "escapes_by_default": true,
+      "controls": [
+        {
+          "id": "vue-template-escaping",
+          "mitigates": ["CWE-79"],
+          "residual_impact": "Mustache interpolation, v-bind and v-text escape HTML. Injection requires an explicit raw-HTML directive.",
+          "sinks": ["v-html"],
+          "bypasses": ["v-html"]
+        }
+      ]
+    },
+    {
+      "id": "django",
+      "name": "Django Templates",
+      "detect": ["django"],
+      "escapes_by_default": true,
+      "controls": [
+        {
+          "id": "django-autoescape",
+          "mitigates": ["CWE-79"],
+          "residual_impact": "Template autoescaping is on by default and escapes interpolated values.",
+          "sinks": ["|safe"],
+          "bypasses": ["|safe", "mark_safe", "{% autoescape off %}", "SafeString"]
+        }
+      ]
+    },
+    {
+      "id": "jinja2",
+      "name": "Jinja2",
+      "detect": ["jinja2"],
+      "escapes_by_default": false,
+      "escape_default_note": "Autoescaping is OFF unless the environment sets autoescape=True or select_autoescape(...). Presence of Jinja2 is therefore NOT evidence of a control; the environment configuration must be found before anything is credited.",
+      "controls": [
+        {
+          "id": "jinja2-autoescape",
+          "mitigates": ["CWE-79"],
+          "requires_config": ["autoescape=True", "select_autoescape"],
+          "residual_impact": "When explicitly enabled, autoescaping escapes interpolated values.",
+          "sinks": ["|safe", "Markup("],
+          "bypasses": ["|safe", "Markup(", "{% autoescape false %}"]
+        }
+      ]
+    },
+    {
+      "id": "thymeleaf",
+      "name": "Thymeleaf",
+      "detect": ["thymeleaf", "spring-boot-starter-thymeleaf"],
+      "escapes_by_default": true,
+      "controls": [
+        {
+          "id": "thymeleaf-escaped-text",
+          "mitigates": ["CWE-79"],
+          "residual_impact": "th:text and [[...]] inlining escape their values.",
+          "sinks": ["th:utext"],
+          "bypasses": ["th:utext"]
+        }
+      ]
+    },
+    {
+      "id": "jsp",
+      "name": "JSP / JSTL",
+      "detect": ["javax.servlet.jsp", "jakarta.servlet.jsp", "jstl"],
+      "escapes_by_default": false,
+      "escape_default_note": "Scriptlet expressions `<%= %>` and bare EL `${...}` are raw. Only <c:out> escapes, and only while escapeXml is not false. A JSP page is not escape-by-default.",
+      "controls": [
+        {
+          "id": "jstl-c-out",
+          "mitigates": ["CWE-79"],
+          "requires_config": ["<c:out"],
+          "residual_impact": "<c:out> escapes XML entities in the value it renders.",
+          "sinks": ["<%=", "${"],
+          "bypasses": ["escapeXml=\"false\"", "escapeXml='false'", "<%="]
+        }
+      ]
+    },
+    {
+      "id": "go-html-template",
+      "name": "Go html/template",
+      "detect": ["html/template"],
+      "escapes_by_default": true,
+      "controls": [
+        {
+          "id": "go-contextual-autoescape",
+          "mitigates": ["CWE-79"],
+          "residual_impact": "Contextual auto-escaping applies per output context (HTML, attribute, JS, CSS, URL).",
+          "sinks": ["template.HTML(", "template.HTMLAttr(", "template.JS(", "template.URL(", "template.CSS("],
+          "bypasses": ["template.HTML(", "template.HTMLAttr(", "template.JS(", "template.URL(", "template.CSS(", "template.Srcset("]
+        }
+      ]
+    }
+  ]
+}

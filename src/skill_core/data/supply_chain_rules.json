@@ -1,0 +1,62 @@
+{
+  "version": "1",
+  "dataset_date": "2026-09-01",
+  "sources": [
+    "https://cwe.mitre.org/data/definitions/829.html",
+    "https://cwe.mitre.org/data/definitions/494.html"
+  ],
+  "_doc": "Deterministic supply-chain rule pack (spec 007, R7). Structural manifest evaluation - offline only; guard evidence is tri-state and resolution behavior that lives outside the repo is recorded as undetermined, never assumed. 'suspicious-package' names match case-normalized exact names; matched values are never serialized into findings.",
+  "rules": [
+    {
+      "id": "pypi-internal-namespace-unprotected",
+      "kind": "internal-namespace-unprotected",
+      "ecosystems": ["pypi"],
+      "pattern": "^(internal|corp|acme)[-_]",
+      "cwe": "CWE-829",
+      "title": "Internal-namespace package resolvable publicly without a demonstrated guard",
+      "description": "The project depends on an internal-looking package name, but no in-repo guard (registry index pinning or lockfile) demonstrates that resolution cannot fall back to a public registry - the dependency-confusion vector.",
+      "recommendation": "Pin the internal index in repo configuration and commit a lockfile; alternatively claim the name publicly."
+    },
+    {
+      "id": "npm-scoped-internal-namespace-unprotected",
+      "kind": "internal-namespace-unprotected",
+      "ecosystems": ["npm"],
+      "pattern": "^@(internal|corp|acme)[-_]",
+      "cwe": "CWE-829",
+      "title": "Scoped internal package without a demonstrated private-registry mapping",
+      "description": "A scoped package bearing an internal namespace has no demonstrated @scope registry mapping (.npmrc) or lockfile-resolved origin in the repository, so a namesake on the public registry can be resolved instead.",
+      "recommendation": "Map the scope to the private registry in .npmrc and commit the lockfile."
+    },
+    {
+      "id": "npm-mutable-reference",
+      "kind": "mutable-reference",
+      "ecosystems": ["npm"],
+      "cwe": "CWE-494",
+      "title": "Mutable dependency reference without a committed lockfile",
+      "description": "A dependency is declared with a mutable or absent version constraint while no lockfile pins the resolved artifact, so subsequent installs can fetch substituted content.",
+      "recommendation": "Pin an exact version and commit the ecosystem lockfile."
+    },
+    {
+      "id": "pypi-mutable-reference",
+      "kind": "mutable-reference",
+      "ecosystems": ["pypi"],
+      "cwe": "CWE-494",
+      "title": "Unpinned dependency without a committed lockfile",
+      "description": "A Python dependency is declared without an exact pin and no lockfile (uv.lock/pylock.toml/Pipfile.lock) pins the resolution, so substituted content can be fetched.",
+      "recommendation": "Pin exact versions (==) and commit the lockfile."
+    },
+    {
+      "id": "known-suspicious-package",
+      "kind": "suspicious-package",
+      "ecosystems": ["npm", "pypi"],
+      "cwe": "CWE-829",
+      "title": "Dependency matches a known typosquat/confusion-prone name",
+      "description": "The declared package name exactly matches an entry in the offline suspicious-name dataset (typosquatting / brandjacking shapes).",
+      "recommendation": "Verify the intended package name and provenance; replace with the legitimate package.",
+      "names": {
+        "pypi": ["reqeusts", "djanga", "python3-dateutil", "colourama"],
+        "npm": ["crossenv", "electron-native-notify", "shadowsock"]
+      }
+    }
+  ]
+}

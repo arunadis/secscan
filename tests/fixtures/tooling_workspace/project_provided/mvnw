@@ -1,0 +1,5 @@
+#!/bin/sh
+# Fixture maven wrapper stub. The discovery layer only needs it to exist and be
+# executable; nothing in the scanner ever executes it during tests.
+echo "fixture mvnw stub - not executed by tests" >&2
+exit 1

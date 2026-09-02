@@ -1,0 +1,45 @@
+{
+  "_doc": [
+    "Must-find corpus (feature 004, FR-011): issue classes the scanner provably",
+    "missed on the reference scans. Every entry must be produced by its fixture;",
+    "a miss fails the build. Data file, not a benchmark case (NON_CASE_FILES)."
+  ],
+  "entries": [
+    {
+      "reference": "20260831T071644Z-c3b48b / graphql-depth-dos",
+      "rule_id": "graphql-depth-dos",
+      "fixture": "compound_graphql_dos",
+      "expected": "CWE-400 finding citing the unauthenticated /graphql endpoint, the schema cycle, and the searched config space",
+      "rationale": "Devin-reported finding sfind-5d77d22 verified real: /graphql permitAll, Article<->Comment cycle, no depth/complexity config anywhere"
+    },
+    {
+      "reference": "20260831T071644Z-c3b48b / seeded-shared-password",
+      "rule_id": "seeded-shared-password",
+      "fixture": "compound_seed_data",
+      "expected": "CWE-1391 finding citing the seed migration and the public login entrypoint, with no password value in any artifact",
+      "rationale": "Devin-reported finding sfind-3e125c7 verified real: V2__seed_data.sql seeds john/jane/bob@example.com with bcrypt('password123'), plaintext in the comment above"
+    },
+    {
+      "reference": "20260831T071644Z-c3b48b / spring-csrf-disabled",
+      "rule_id": "spring-csrf-disabled",
+      "fixture": "misconfig_spring",
+      "expected": "CWE-352 finding at the csrf().disable() call site",
+      "rationale": "Missed by both scanners: WebSecurityConfig.java:38-40"
+    },
+    {
+      "reference": "20260831T071644Z-c3b48b / spring-cors-wildcard",
+      "rule_id": "spring-cors-wildcard",
+      "fixture": "misconfig_spring",
+      "expected": "CWE-942 finding at the allowedOrigins(\"*\") call site",
+      "rationale": "Missed by both scanners: WebSecurityConfig.java:38-40"
+    },
+    {
+      "reference": "20260831T071644Z-c3b48b / marked-redos",
+      "rule_id": "advisory-match",
+      "fixture": "advisory_npm_marked",
+      "expect_package": "marked",
+      "expected": "CWE-1035 finding for marked 1.1.1 naming its ReDoS advisory ids, the affected range, and the manifest location",
+      "rationale": "Devin mentions marked@^1.1.1's known ReDoS CVEs only inside the XSS finding; neither scanner produced a dependency finding"
+    }
+  ]
+}

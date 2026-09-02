@@ -1,0 +1,31 @@
+{
+  "_comment": [
+    "Pre-feature usage baseline for SC-013 (T005). Captured from the scan whose",
+    "independent review motivated feature 002, so the comparison is like-for-like.",
+    "SC-013 allows the savings ratio to fall by at most 15% once context packets",
+    "carry line numbers (research.md A6).",
+    "",
+    "IMPORTANT: a future measurement is only comparable when profile AND target",
+    "match. README.md quotes a different figure (7.3x) measured on the reference",
+    "fixture under the 'audit' profile - do not compare across those."
+  ],
+  "scan_id": "20260830T113443Z-00250b",
+  "target": "angular2-hn",
+  "target_revision": "b4677f3",
+  "profile": "full",
+  "execution_mode": "agent-mediated",
+  "savings_vs_maximal_context": 7.58,
+  "min_acceptable_savings": 6.44,
+  "analysis_invocations": 25,
+  "input_tokens": 39575,
+  "output_tokens": 5544,
+  "batch_invocations": 0,
+  "interactive_invocations": 25,
+  "batch_fallbacks": 0,
+  "escalation_spread": {
+    "l1": 10,
+    "l2": 9,
+    "l3": 6,
+    "l4": 0
+  }
+}

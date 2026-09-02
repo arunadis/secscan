@@ -1,0 +1,8 @@
+{
+  "name": "crosscheck-app",
+  "version": "1.0.0",
+  "dependencies": {
+    "left-pad-again": "1.2.3",
+    "safe-serial": "3.0.0"
+  }
+}

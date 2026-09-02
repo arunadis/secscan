@@ -1,0 +1,42 @@
+{
+  "version": "1",
+  "dataset_date": "2026-08-31",
+  "source": "OSV (OSV Schema), curated subset for reference repositories",
+  "source_license": "CC-BY-4.0",
+  "staleness_threshold_days": 90,
+  "_doc": [
+    "Bundled npm advisory snapshot (feature 004, FR-007) — the offline baseline.",
+    "Refresh mirrors eol.json: fetch the OSV export, regenerate this file,",
+    "update dataset_date, re-run the suite. Deliberately manual."
+  ],
+  "packages": {
+    "marked": [
+      {
+        "introduced": "0",
+        "fixed": "4.0.10",
+        "affected_range": "<4.0.10",
+        "ids": ["CVE-2022-21680", "GHSA-rrrm-qjw4-v8hf"],
+        "severity": "high",
+        "summary": "Regular expression denial of service in marked (blockquote parsing)"
+      },
+      {
+        "introduced": "0",
+        "fixed": "4.0.10",
+        "affected_range": "<4.0.10",
+        "ids": ["CVE-2022-21681", "GHSA-5v2h-r2cx-5xgj"],
+        "severity": "high",
+        "summary": "Regular expression denial of service in marked (inline.reflinkSearch)"
+      }
+    ],
+    "minimist": [
+      {
+        "introduced": "0",
+        "fixed": "1.2.6",
+        "affected_range": "<1.2.6",
+        "ids": ["CVE-2021-44906", "GHSA-xvch-5gv4-984h"],
+        "severity": "critical",
+        "summary": "Prototype pollution in minimist"
+      }
+    ]
+  }
+}

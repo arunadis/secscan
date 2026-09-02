@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "envelope.schema.json",
+  "title": "Artifact Envelope",
+  "type": "object",
+  "required": ["schema_version", "produced_by", "scan_id", "payload"],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "produced_by": {
+      "type": "object",
+      "required": ["stage", "tool_version"],
+      "properties": {
+        "stage": { "type": "string" },
+        "tool_version": { "type": "string" }
+      }
+    },
+    "scan_id": { "type": "string" },
+    "payload": {}
+  }
+}

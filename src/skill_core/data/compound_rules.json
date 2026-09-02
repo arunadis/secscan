@@ -1,0 +1,45 @@
+{
+  "version": "1",
+  "dataset_date": "2026-08-31",
+  "_doc": [
+    "Compound cross-file weakness rules (feature 004, FR-004).",
+    "Each rule is a set of evidence legs evaluated deterministically over",
+    "whole-repository facts. A finding publishes only when every leg is",
+    "evidenced or absent-proven; a control-present leg retracts the rule;",
+    "an undetermined leg downgrades the finding and names itself.",
+    "Adding a rule over existing leg kinds is a data-only change (FR-003 style)."
+  ],
+  "rules": [
+    {
+      "id": "graphql-depth-dos",
+      "cwe": "CWE-400",
+      "severity_score": 5.3,
+      "title": "No GraphQL query depth/complexity limit on an unauthenticated endpoint",
+      "summary": "The GraphQL endpoint permits anonymous access and the schema contains a type-reference cycle, while no query depth, complexity, or cost limiting is configured anywhere — a single deeply nested anonymous query fans out resolver and database calls.",
+      "recommendation": "Enforce a query depth/complexity limit (e.g. max-query-depth or an instrumentation-based cost analyser) and consider disabling introspection outside development.",
+      "legs": [
+        {"kind": "endpoint-unauthenticated", "params": {"route_contains": "graphql"}},
+        {"kind": "graphql-schema-cycle", "params": {}},
+        {
+          "kind": "config-absent",
+          "params": {
+            "file_globs": ["**/*.properties", "**/*.yml", "**/*.yaml", "**/*.java", "**/*.ts", "**/*.js"],
+            "patterns": ["(?i)max[-_.]?query[-_.]?depth", "(?i)query[-_.]?complexity", "(?i)max[-_.]?depth", "(?i)instrumentation"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "seeded-shared-password",
+      "cwe": "CWE-1391",
+      "severity_score": 5.3,
+      "title": "Seed data provisions loginable accounts with a shared, documented password",
+      "summary": "A migration or seed fixture provisions user accounts whose shared password is documented alongside, and a public login entrypoint accepts them — any reader of the repository can authenticate as a seeded account.",
+      "recommendation": "Remove seeded credentials from migrations, or scope seed data to non-deployed environments and rotate anything ever shipped.",
+      "legs": [
+        {"kind": "seeded-credential-pattern", "params": {}},
+        {"kind": "public-auth-entrypoint", "params": {"route_contains": "login"}}
+      ]
+    }
+  ]
+}

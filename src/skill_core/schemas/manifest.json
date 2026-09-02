@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "manifest.schema.json",
+  "title": "Repository Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["repository", "languages", "modules", "entrypoints"],
+  "properties": {
+    "repository": { "type": "string" },
+    "languages": { "type": "array", "items": { "type": "string" } },
+    "frameworks": { "type": "array", "items": { "type": "string" } },
+    "modules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "path", "file_count"],
+        "properties": {
+          "name": { "type": "string" },
+          "path": { "type": "string" },
+          "file_count": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "entrypoints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["symbol", "kind"],
+        "properties": {
+          "symbol": { "type": "string" },
+          "kind": { "enum": ["http", "cli", "consumer", "rpc"] },
+          "route": { "type": "string" },
+          "file": { "type": "string" }
+        }
+      }
+    },
+    "databases": { "type": "array", "items": { "type": "string" } },
+    "external_services": { "type": "array", "items": { "type": "string" } },
+    "unparsed_paths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "areas handled by directory heuristics (reduced confidence)"
+    },
+    "loc": { "type": "integer", "minimum": 0 },
+    "architecture": {
+      "$ref": "architecture_profile.schema.json",
+      "description": "this member's execution shape (FR-013)"
+    }
+  }
+}

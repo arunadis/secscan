@@ -1,0 +1,23 @@
+{
+  "version": "1",
+  "dataset_date": "2026-08-31",
+  "source": "OSV (OSV Schema), curated subset for reference repositories",
+  "source_license": "CC-BY-4.0",
+  "staleness_threshold_days": 90,
+  "_doc": [
+    "Bundled PyPI advisory snapshot (feature 004, FR-007).",
+    "Refresh mirrors eol.json; deliberately manual."
+  ],
+  "packages": {
+    "urllib3": [
+      {
+        "introduced": "0",
+        "fixed": "1.26.5",
+        "affected_range": "<1.26.5",
+        "ids": ["CVE-2021-33503", "GHSA-q2q7-5pp4-w6pg"],
+        "severity": "high",
+        "summary": "Catastrophic backtracking in URL parsing (ReDoS)"
+      }
+    ]
+  }
+}

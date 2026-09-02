@@ -1,0 +1,20 @@
+{
+  "reportSchema": "1.1",
+  "scanInfo": { "engineVersion": "9.0.0", "dataSource": [ { "name": "NVD", "timestamp": "2026-09-01T00:00:00Z" } ] },
+  "projectInfo": { "name": "project-provided-service" },
+  "dependencies": [
+    {
+      "fileName": "jackson-databind-2.15.2.jar",
+      "packages": [ { "id": "pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.15.2" } ],
+      "vulnerabilities": [
+        {
+          "source": "NVD",
+          "name": "CVE-2023-99999",
+          "severity": "High",
+          "cvssv3": { "baseScore": 7.5 },
+          "description": "Recorded fixture advisory for jackson-databind"
+        }
+      ]
+    }
+  ]
+}

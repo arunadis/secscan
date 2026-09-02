@@ -1,0 +1,372 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "report.schema.json",
+  "title": "Security Report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "scan_id",
+    "workspace",
+    "execution_mode",
+    "profile",
+    "executive_summary",
+    "findings_by_band",
+    "coverage",
+    "usage"
+  ],
+  "properties": {
+    "scan_id": {
+      "type": "string"
+    },
+    "workspace": {
+      "type": "object",
+      "required": [
+        "id",
+        "members"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "members": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "execution_mode": {
+      "enum": [
+        "agent-mediated",
+        "endpoint-interactive",
+        "endpoint-batch"
+      ]
+    },
+    "profile": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "overrides": {
+          "type": "object"
+        }
+      }
+    },
+    "executive_summary": {
+      "type": "string"
+    },
+    "findings_by_band": {
+      "type": "object",
+      "description": "band -> ordered findings (verification-aware ranking)",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "$ref": "finding.schema.json"
+        }
+      }
+    },
+    "attack_paths": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "description",
+          "finding_ids"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "finding_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "crosses_repos": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "cross_system_findings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "finding ids whose evidence spans >=2 repos/segments (FR-015)"
+    },
+    "recommendations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "required": [
+        "repos_analyzed",
+        "segments_analyzed"
+      ],
+      "properties": {
+        "repos_analyzed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "segments_analyzed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "gap_details": {
+          "type": "array",
+          "description": "structured coverage gaps (feature 004, FR-010): cause, criticality, and impact per gap; additive alongside the legacy gaps strings",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "cause",
+              "file",
+              "segment_id",
+              "security_critical",
+              "impact"
+            ],
+            "properties": {
+              "cause": {
+                "enum": [
+                  "blocked-value",
+                  "budget-dropped",
+                  "unparsed-format"
+                ]
+              },
+              "file": {
+                "type": "string"
+              },
+              "segment_id": {
+                "type": "string"
+              },
+              "security_critical": {
+                "type": "boolean"
+              },
+              "impact": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "unavailable_members": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "unverifiable_flows": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "redaction_warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "clean": {
+          "type": "boolean",
+          "description": "true when no findings passed thresholds (scanned-and-clean, not failed)"
+        },
+        "blocking_gaps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "unassessed domains severe enough to render at the top of the report, each with the command that closes it. Distinct from a clean result (FR-033)."
+        },
+        "file_classes": {
+          "type": "array",
+          "description": "per-file-class coverage: what the code model represented, what it could not parse, and what was not attempted. Every enumerated security-relevant file appears in exactly one bucket - silent exclusion is a contract violation (FR-027, FR-029).",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "file_class",
+              "represented"
+            ],
+            "properties": {
+              "file_class": {
+                "enum": [
+                  "source",
+                  "template",
+                  "dependency-manifest",
+                  "deploy-config",
+                  "datastore-rules",
+                  "client-cache-config",
+                  "ai-agent-config",
+                  "ai-mcp-config",
+                  "prompt-artifact"
+                ]
+              },
+              "represented": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "unparsed": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "path",
+                    "format"
+                  ],
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "format": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "not_attempted": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "remediation_command": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "audit_outcomes": {
+          "type": "array",
+          "description": "per member and ecosystem. A missing toolchain, non-zero exit, timeout, or unreachable advisory source maps to 'could-not-check' - never to 'clean' (FR-030c, FR-033).",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "member",
+              "ecosystem",
+              "status"
+            ],
+            "properties": {
+              "member": {
+                "type": "string"
+              },
+              "ecosystem": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "advisories",
+                  "clean",
+                  "could-not-check"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              },
+              "remediation_command": {
+                "type": "string"
+              },
+              "tool": {
+                "type": "string"
+              },
+              "tool_version": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "resolution_tiers": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "how many reported findings resolved at each tier, plus how many were rejected as unresolvable (FR-003a)",
+          "properties": {
+            "symbol": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "file": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "rejected": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "usage": {
+      "$ref": "usage.schema.json"
+    },
+    "unavailable_features": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "endpoint-only features unavailable in agent-mediated mode (FR-007a)"
+    },
+    "suppressions": {
+      "type": "array",
+      "description": "Feature 008 (FR-007): external findings the cross-check structurally disproved. Auditable, never silent: ground from a closed enum plus evidence.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "finding",
+          "tool_id",
+          "disproof_ground",
+          "evidence"
+        ],
+        "properties": {
+          "finding": {
+            "type": "object"
+          },
+          "tool_id": {
+            "type": "string"
+          },
+          "disproof_ground": {
+            "enum": [
+              "package-absent",
+              "version-outside-range",
+              "location-unresolvable",
+              "component-absent"
+            ]
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,383 @@
+{
+  "version": "2",
+  "dataset_date": "2026-08-30",
+  "_doc": [
+    "Per-language stack descriptors: template forms and package ecosystems",
+    "(FR-025a, FR-025b, FR-030d).",
+    "",
+    "SCOPE. 'Grammar-backed language' means one for which the code model loads a",
+    "parser grammar (pipeline/extract/_GRAMMARS). That is the set below. Suffixes",
+    "that are merely enumerated but have no grammar - .sql, .tf - are NOT",
+    "grammar-backed and impose no template or ecosystem requirement; demanding a",
+    "'package ecosystem for SQL' would be meaningless.",
+    "",
+    "Languages sharing an ecosystem count once: JavaScript, TypeScript and TSX all",
+    "resolve to npm, so five language entries span four ecosystems.",
+    "",
+    "Adding a stack is a data change and must require no pipeline change (FR-025b)."
+  ],
+  "languages": [
+    {
+      "language": "javascript",
+      "suffixes": [
+        ".js",
+        ".jsx",
+        ".mjs",
+        ".cjs"
+      ],
+      "grammar": "tree_sitter_javascript:language",
+      "template_forms": [
+        "jsx",
+        "html",
+        "vue"
+      ],
+      "ecosystem": "npm"
+    },
+    {
+      "language": "typescript",
+      "suffixes": [
+        ".ts"
+      ],
+      "grammar": "tree_sitter_typescript:language_typescript",
+      "template_forms": [
+        "html",
+        "angular-html",
+        "vue"
+      ],
+      "ecosystem": "npm"
+    },
+    {
+      "language": "tsx",
+      "suffixes": [
+        ".tsx"
+      ],
+      "grammar": "tree_sitter_typescript:language_tsx",
+      "grammar_note": "Before feature 002 .tsx was parsed with language_typescript, which does not accept JSX. React dangerouslySetInnerHTML in .tsx files was therefore invisible to the pipeline (research.md A1).",
+      "template_forms": [
+        "jsx"
+      ],
+      "ecosystem": "npm"
+    },
+    {
+      "language": "python",
+      "suffixes": [
+        ".py"
+      ],
+      "grammar": "tree_sitter_python:language",
+      "template_forms": [
+        "jinja2",
+        "django"
+      ],
+      "ecosystem": "pypi"
+    },
+    {
+      "language": "java",
+      "suffixes": [
+        ".java"
+      ],
+      "grammar": "tree_sitter_java:language",
+      "template_forms": [
+        "jsp",
+        "thymeleaf"
+      ],
+      "ecosystem": "maven"
+    },
+    {
+      "language": "go",
+      "suffixes": [
+        ".go"
+      ],
+      "grammar": "tree_sitter_go:language",
+      "template_forms": [
+        "go-html-template"
+      ],
+      "ecosystem": "go"
+    }
+  ],
+  "not_grammar_backed": [
+    {
+      "language": "sql",
+      "suffixes": [
+        ".sql"
+      ],
+      "note": "enumerated for secret/pattern scanning only; no template form or package ecosystem applies"
+    },
+    {
+      "language": "terraform",
+      "suffixes": [
+        ".tf"
+      ],
+      "note": "enumerated for infrastructure findings; no template form or package ecosystem applies"
+    }
+  ],
+  "template_forms": [
+    {
+      "id": "html",
+      "suffixes": [
+        ".html",
+        ".htm"
+      ],
+      "parser": "tree_sitter_html:language",
+      "sink_attributes": [
+        "[innerHTML]",
+        "[outerHTML]",
+        "ng-bind-html",
+        "v-html",
+        "th:utext"
+      ],
+      "note": "Angular, Vue and Thymeleaf unsafe bindings are plain HTML attributes, so the HTML grammar locates them with no per-dialect grammar (research.md A1)."
+    },
+    {
+      "id": "angular-html",
+      "suffixes": [
+        ".html"
+      ],
+      "parser": "tree_sitter_html:language",
+      "sink_attributes": [
+        "[innerHTML]",
+        "ng-bind-html"
+      ]
+    },
+    {
+      "id": "jsx",
+      "suffixes": [
+        ".jsx",
+        ".tsx"
+      ],
+      "parser": "tree_sitter_javascript:language",
+      "sink_expressions": [
+        "dangerouslySetInnerHTML"
+      ]
+    },
+    {
+      "id": "vue",
+      "suffixes": [
+        ".vue"
+      ],
+      "parser": "tree_sitter_html:language",
+      "sink_attributes": [
+        "v-html"
+      ],
+      "note": "SFC: <template> via the HTML grammar; <script> handed to the JS/TS grammar."
+    },
+    {
+      "id": "jinja2",
+      "suffixes": [
+        ".j2",
+        ".jinja",
+        ".jinja2"
+      ],
+      "parser": "delimiter-pass",
+      "sink_expressions": [
+        "|safe",
+        "Markup(",
+        "{% autoescape false %}"
+      ],
+      "note": "Deterministic delimiter pass rather than a grammar: tree-sitter-jinja-dialects is sdist-only at 0.1.x and would need a compiler at install time (research.md A1)."
+    },
+    {
+      "id": "django",
+      "suffixes": [
+        ".html",
+        ".djhtml"
+      ],
+      "parser": "delimiter-pass",
+      "sink_expressions": [
+        "|safe",
+        "{% autoescape off %}"
+      ]
+    },
+    {
+      "id": "jsp",
+      "suffixes": [
+        ".jsp",
+        ".jspx",
+        ".tag"
+      ],
+      "parser": "delimiter-pass",
+      "sink_expressions": [
+        "<%=",
+        "escapeXml=\"false\"",
+        "escapeXml='false'"
+      ]
+    },
+    {
+      "id": "thymeleaf",
+      "suffixes": [
+        ".html"
+      ],
+      "parser": "tree_sitter_html:language",
+      "sink_attributes": [
+        "th:utext"
+      ]
+    },
+    {
+      "id": "go-html-template",
+      "suffixes": [
+        ".tmpl",
+        ".gohtml",
+        ".gotmpl"
+      ],
+      "parser": "delimiter-pass",
+      "sink_expressions": [
+        "template.HTML(",
+        "template.HTMLAttr(",
+        "template.JS(",
+        "template.URL("
+      ]
+    }
+  ],
+  "ecosystems": [
+    {
+      "id": "npm",
+      "manifests": [
+        "package.json"
+      ],
+      "lockfiles": [
+        "package-lock.json",
+        "npm-shrinkwrap.json",
+        "yarn.lock",
+        "pnpm-lock.yaml"
+      ],
+      "audit_adapter": "node",
+      "capability": "native-advisory"
+    },
+    {
+      "id": "pypi",
+      "manifests": [
+        "requirements.txt",
+        "pyproject.toml",
+        "setup.py",
+        "setup.cfg"
+      ],
+      "lockfiles": [
+        "poetry.lock",
+        "uv.lock",
+        "pylock.toml",
+        "Pipfile.lock"
+      ],
+      "audit_adapter": "python",
+      "capability": "native-advisory"
+    },
+    {
+      "id": "maven",
+      "manifests": [
+        "pom.xml",
+        "build.gradle",
+        "build.gradle.kts"
+      ],
+      "lockfiles": [
+        "gradle.lockfile"
+      ],
+      "audit_adapter": "java",
+      "capability": "coordinates-plus-offline-match",
+      "capability_note": "Java has no read-only native audit. OWASP dependency-check would make Maven or Gradle resolve and download a plugin artifact, which FR-031 forbids, so coordinates are enumerated offline and matched against a bundled advisory export (research.md A2)."
+    },
+    {
+      "id": "go",
+      "manifests": [
+        "go.mod"
+      ],
+      "lockfiles": [
+        "go.sum"
+      ],
+      "audit_adapter": "go",
+      "capability": "native-advisory"
+    }
+  ],
+  "file_classes": {
+    "dependency-manifest": [
+      "package.json",
+      "package-lock.json",
+      "npm-shrinkwrap.json",
+      "yarn.lock",
+      "pnpm-lock.yaml",
+      "requirements.txt",
+      "pyproject.toml",
+      "setup.py",
+      "setup.cfg",
+      "poetry.lock",
+      "uv.lock",
+      "pylock.toml",
+      "Pipfile.lock",
+      "pom.xml",
+      "build.gradle",
+      "build.gradle.kts",
+      "gradle.lockfile",
+      "go.mod",
+      "go.sum"
+    ],
+    "deploy-config": [
+      "firebase.json",
+      "vercel.json",
+      "netlify.toml",
+      "angular.json",
+      "Dockerfile",
+      "docker-compose.yml",
+      "docker-compose.yaml",
+      "app.yaml",
+      "serverless.yml",
+      "nginx.conf",
+      "web.config"
+    ],
+    "datastore-rules": [
+      "database.rules.json",
+      "firestore.rules",
+      "storage.rules"
+    ],
+    "client-cache-config": [
+      "ngsw-config.json",
+      "service-worker.js",
+      "sw.js",
+      "workbox-config.js",
+      "manifest.webmanifest"
+    ],
+    "ai-agent-config": [
+      ".clinerules",
+      ".cursorrules",
+      ".roorules",
+      ".windsurfrules",
+      "AGENTS.md",
+      "CLAUDE.md",
+      "GEMINI.md",
+      "copilot-instructions.md"
+    ],
+    "ai-mcp-config": [
+      ".mcp.json",
+      "claude_desktop_config.json",
+      "mcp.json"
+    ],
+    "prompt-artifact": [
+      "agent.prompt",
+      "system.prompt",
+      "system_prompt.md",
+      "system_prompt.txt"
+    ]
+  },
+  "test_path_patterns": {
+    "_doc": "Test-code path conventions per stack (feature 003, FR-010). Glob-matched against repo-relative paths; '*' crosses directory separators. A match grades credential findings as test code \u2014 reported at reduced severity/confidence, never suppressed.",
+    "jvm": [
+      "*/src/test/*",
+      "src/test/*",
+      "*/src/it/*"
+    ],
+    "python": [
+      "tests/*",
+      "*/tests/*",
+      "test_*.py",
+      "*/test_*.py",
+      "*_test.py",
+      "conftest.py",
+      "*/conftest.py"
+    ],
+    "node": [
+      "*.test.*",
+      "*.spec.*",
+      "__tests__/*",
+      "*/__tests__/*"
+    ],
+    "go": [
+      "*_test.go"
+    ]
+  }
+}

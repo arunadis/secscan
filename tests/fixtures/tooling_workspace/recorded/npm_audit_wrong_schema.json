@@ -1,0 +1,6 @@
+{
+  "reportVersion": 99,
+  "issues": [
+    { "pkg": "rapid-parse", "problem": "something" }
+  ]
+}

@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "context_packet.schema.json",
+  "title": "Context Packet",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["segment_id", "escalation_level", "purpose", "source", "token_budget", "redaction"],
+  "properties": {
+    "segment_id": { "type": "string" },
+    "escalation_level": { "type": "integer", "minimum": 1, "maximum": 4 },
+    "purpose": { "type": "string" },
+    "domains": { "type": "array", "items": { "type": "string" } },
+    "entrypoints": { "type": "array", "items": { "type": "string" } },
+    "call_graph_summary": { "type": "string" },
+    "data_flows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source", "sink"],
+        "properties": {
+          "source": { "type": "string" },
+          "transforms": { "type": "array", "items": { "type": "string" } },
+          "validations": { "type": "array", "items": { "type": "string" } },
+          "sink": { "type": "string" },
+          "crosses_repo": { "type": "boolean" }
+        }
+      }
+    },
+    "security_relevant_symbols": { "type": "array", "items": { "type": "string" } },
+    "source": {
+      "type": "object",
+      "description": "post-redaction file excerpts keyed by path",
+      "additionalProperties": { "type": "string" }
+    },
+    "token_budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_context_tokens", "max_output_tokens", "escalation_threshold"],
+      "properties": {
+        "max_context_tokens": { "type": "integer", "minimum": 1 },
+        "max_output_tokens": { "type": "integer", "minimum": 1 },
+        "escalation_threshold": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+      }
+    },
+    "estimated_tokens": { "type": "integer", "minimum": 0 },
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["applied"],
+      "properties": {
+        "applied": { "const": true },
+        "redacted_items": { "type": "integer", "minimum": 0 },
+        "blocked_items": { "type": "integer", "minimum": 0 },
+        "exempted_items": {
+          "type": "array",
+          "description": "suppression decisions (FR-004); values are omitted — inspectable, never secret-bearing",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["origin", "line", "rule", "classification", "reason", "decision"],
+            "properties": {
+              "origin": { "type": "string" },
+              "line": { "type": "integer", "minimum": 1 },
+              "rule": { "type": "string" },
+              "classification": { "type": "string" },
+              "reason": { "type": "string" },
+              "decision": { "enum": ["exempt-identifier", "exempt-message"] }
+            }
+          }
+        },
+        "rules_version": { "type": "string" }
+      }
+    }
+  }
+}

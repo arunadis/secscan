@@ -1,0 +1,35 @@
+{
+  "auditReportVersion": 2,
+  "vulnerabilities": {
+    "rapid-parse": {
+      "name": "rapid-parse",
+      "severity": "high",
+      "isDirect": true,
+      "via": [
+        {
+          "source": 1100001,
+          "name": "rapid-parse",
+          "dependency": "rapid-parse",
+          "title": "Prototype pollution in rapid-parse",
+          "url": "https://github.com/advisories/GHSA-AAAA-0000-AAAA",
+          "severity": "high",
+          "cwe": ["CWE-1321"],
+          "cvss": { "score": 7.5 },
+          "range": "<2.1.0"
+        }
+      ],
+      "effects": [],
+      "range": "<2.1.0",
+      "nodes": ["node_modules/rapid-parse"],
+      "fixAvailable": {
+        "name": "rapid-parse",
+        "version": "2.1.0",
+        "isSemVerMajor": false
+      }
+    }
+  },
+  "metadata": {
+    "vulnerabilities": { "info": 0, "low": 0, "moderate": 0, "high": 1, "critical": 0 },
+    "dependencies": { "prod": 1, "dev": 0, "optional": 0, "peer": 0, "total": 1 }
+  }
+}

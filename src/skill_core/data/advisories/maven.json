@@ -1,0 +1,23 @@
+{
+  "version": "1",
+  "dataset_date": "2026-08-31",
+  "source": "OSV (OSV Schema), curated subset for reference repositories",
+  "source_license": "CC-BY-4.0",
+  "staleness_threshold_days": 90,
+  "_doc": [
+    "Bundled Maven advisory snapshot (feature 004, FR-007). Coordinates are",
+    "group:artifact. Refresh mirrors eol.json; deliberately manual."
+  ],
+  "packages": {
+    "org.apache.logging.log4j:log4j-core": [
+      {
+        "introduced": "2.0",
+        "fixed": "2.17.0",
+        "affected_range": ">=2.0 <2.17.0",
+        "ids": ["CVE-2021-44228", "GHSA-jfh8-c2jp-5v3q"],
+        "severity": "critical",
+        "summary": "Remote code execution via JNDI lookup (Log4Shell)"
+      }
+    ]
+  }
+}

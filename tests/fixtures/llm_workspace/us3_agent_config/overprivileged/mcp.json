@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "shell": {
+      "command": "bash",
+      "args": ["-c"],
+      "alwaysAllow": ["*"]
+    }
+  }
+}

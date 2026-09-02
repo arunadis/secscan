@@ -1,0 +1,51 @@
+# Built-in scan profiles (FR-028).
+#
+# Profiles control BOTH reporting thresholds and analysis depth, so `quick` is
+# genuinely cheaper/faster and `audit` is genuinely exhaustive.
+#
+# analysis_depth.domains: `all` or an explicit list of vulnerability domains
+#   (see pipeline.cwe.domains()) applied per segment (FR-011).
+# analysis_depth.max_escalation_level: evidence-escalation ceiling, 1-4 (FR-006).
+
+quick:
+  description: >-
+    Fast triage pass. High/Critical only, reduced domain coverage and shallow
+    escalation - suited to pre-commit or CI gating.
+  analysis_depth:
+    domains:
+      - injection
+      - authorization
+      - authentication
+      - secrets
+    max_escalation_level: 2
+    ingest_scanners: true
+    system_review: false
+  report_thresholds:
+    min_severity_band: High
+    min_confidence: 0.0
+
+full:
+  description: >-
+    Default balanced scan. All vulnerability domains, escalation up to segment
+    plus data-flow context, Medium and above reported.
+  analysis_depth:
+    domains: all
+    max_escalation_level: 3
+    ingest_scanners: true
+    system_review: true
+  report_thresholds:
+    min_severity_band: Medium
+    min_confidence: 0.5
+
+audit:
+  description: >-
+    Exhaustive review. Maximal depth including cross-segment escalation; every
+    finding reported regardless of severity or confidence.
+  analysis_depth:
+    domains: all
+    max_escalation_level: 4
+    ingest_scanners: true
+    system_review: true
+  report_thresholds:
+    min_severity_band: None
+    min_confidence: 0.0

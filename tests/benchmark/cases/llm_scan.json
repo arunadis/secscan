@@ -1,0 +1,13 @@
+{
+  "case_id": "llm-detection-seeded",
+  "kind": "seeded-workspace",
+  "target": "tests/fixtures/llm_workspace/ (us1_direct, us2_indirect, us3_agent_config variants)",
+  "source_of_truth": "ground truth declared at fixture creation for spec 007 (modern exploit category); each fixture's docstring states whether it is vulnerable or a deliberate false positive that must not be reported",
+  "expectations": [
+    {
+      "defect_class": "llm-detection",
+      "assertion": "Seeded direct prompt injection, sensitive-context, insecure-output, indirect-exposure, and agent-config surfaces are reported with resolving locations; the safe structured-separation, bounded-ingestion, and scoped-config fixtures produce zero llm/agent findings",
+      "baseline": "spec 007 introduction of the category; no prior coverage"
+    }
+  ]
+}

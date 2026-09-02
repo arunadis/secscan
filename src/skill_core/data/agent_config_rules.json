@@ -1,0 +1,64 @@
+{
+  "version": "1",
+  "dataset_date": "2026-09-01",
+  "sources": [
+    "https://cwe.mitre.org/data/definitions/250.html",
+    "https://owasp.org/www-project-top-10-for-large-language-model-applications/"
+  ],
+  "_doc": "Deterministic excessive-agency rule pack for shipped AI configuration artifacts (spec 007, R8). Structural rules evaluate parsed MCP JSON; anchored-pattern rules match over redacted markdown rule-file text. Matched values are never serialized into findings.",
+  "rules": [
+    {
+      "id": "mcp-shell-arbitrary-command",
+      "form": "structural",
+      "file_classes": ["ai-mcp-config"],
+      "grant": "shell-exec",
+      "cwe": "CWE-250",
+      "title": "MCP server launches a shell with an arbitrary command string",
+      "description": "A shipped tool configuration delegates to a shell interpreter with an argument-string command channel and no demonstrated approval gate, so any instruction the model receives can become an arbitrary command.",
+      "recommendation": "Replace shell delegation with a fixed, typed command wrapper and require human confirmation before execution."
+    },
+    {
+      "id": "mcp-auto-approve-all-tools",
+      "form": "structural",
+      "file_classes": ["ai-mcp-config"],
+      "grant": "tool-auto-approve",
+      "cwe": "CWE-250",
+      "title": "All tools are auto-approved without a human checkpoint",
+      "description": "The configuration auto-approves every exposed tool (wildcard auto-approval), removing the human-approval gate that makes over-privileged actions recoverable.",
+      "recommendation": "Auto-approve only read-only tools explicitly; require approval for anything that writes, sends, or executes."
+    },
+    {
+      "id": "agent-rules-auto-approve-everything",
+      "form": "anchored-pattern",
+      "file_classes": ["ai-agent-config"],
+      "grant": "tool-auto-approve",
+      "pattern": "(?im)auto.?approv\\w*\\s*[:=]?\\s*(true|all|always|\\*)",
+      "cwe": "CWE-250",
+      "title": "Agent rule file auto-approves every action",
+      "description": "The shipped agent instructions declare blanket auto-approval, so the agent acts on any instruction - including injected ones - without human review.",
+      "recommendation": "Approve consequential actions explicitly; reserve auto-approve for read-only operations."
+    },
+    {
+      "id": "agent-rules-unrestricted-filesystem-write",
+      "form": "anchored-pattern",
+      "file_classes": ["ai-agent-config"],
+      "grant": "fs-write",
+      "pattern": "(?im)(grant|allow|permit)[^\\n]{0,40}(full|unrestricted|any|all)[^\\n]{0,30}(filesystem|file system|disk|write)",
+      "cwe": "CWE-250",
+      "title": "Agent rule file grants unrestricted filesystem write access",
+      "description": "The shipped agent instructions grant blanket write access to the filesystem with no demonstrated approval gate.",
+      "recommendation": "Scope writable paths and require confirmation for writes outside a designated working area."
+    },
+    {
+      "id": "agent-rules-unrestricted-network-egress",
+      "form": "anchored-pattern",
+      "file_classes": ["ai-agent-config"],
+      "grant": "network-egress",
+      "pattern": "(?im)(grant|allow|permit)[^\\n]{0,40}(full|unrestricted|any|all)[^\\n]{0,30}(network|internet|egress|outbound)",
+      "cwe": "CWE-250",
+      "title": "Agent rule file grants unrestricted network egress",
+      "description": "The shipped agent instructions grant unbounded outbound network access with no demonstrated approval gate.",
+      "recommendation": "Allow-list destinations; require approval for egress outside documented endpoints."
+    }
+  ]
+}

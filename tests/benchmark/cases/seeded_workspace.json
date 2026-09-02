@@ -1,0 +1,48 @@
+{
+  "case_id": "seeded-multi-member-workspace",
+  "kind": "seeded-workspace",
+  "target": "tests/fixtures/multi_member_workspace.py",
+  "source_of_truth": "Ground truth declared by the fixture generator when the workspace is built (tests/fixtures/multi_member_workspace.GROUND_TRUTH). Needed because multi-member behaviour cannot be observed on a single repository: four of this feature's decisions only manifest with two or more members, so a single-member benchmark would leave them unguarded.",
+  "expectations": [
+    {
+      "defect_class": "classification",
+      "assertion": "A request-forgery finding located in the browser-only member is RETAINED, because a reachable sibling issues server-side requests, and the enabling member is named.",
+      "baseline": "Not previously possible: the applicability relation did not exist, so this could not be suppressed - but a per-member implementation would have suppressed it and introduced a false-negative class that does not exist today."
+    },
+    {
+      "defect_class": "classification",
+      "assertion": "The same finding in a lone browser-only member with no reachable sibling IS remapped, so the relation still does its job.",
+      "baseline": "1 of 2 findings in the reviewed scan was filed as CWE-918 against a browser-only target."
+    },
+    {
+      "defect_class": "calibration",
+      "assertion": "A hard-coded host resolving to a sibling member raises no third-party trust finding; a genuinely unowned host does; undetermined ownership is reported as external.",
+      "baseline": "The reviewed scan reported the real unowned-host risk only as a secondary note on an unrelated weakness class."
+    },
+    {
+      "defect_class": "dependency-coverage",
+      "assertion": "Each member is audited against its own ecosystem (npm and PyPI here); a member whose toolchain is absent gets its own named gap rather than being absorbed into a workspace-wide statement.",
+      "baseline": "The reviewed scan assessed no ecosystem at all and reported the domain as unassessed in a single Coverage bullet."
+    },
+    {
+      "defect_class": "evidence-integrity",
+      "assertion": "Architecture profiles are persisted per member so applicability can read them; a member with no profile contributes 'undetermined' rather than narrowing the reachable set.",
+      "baseline": "No architecture model existed."
+    },
+    {
+      "defect_class": "coverage",
+      "assertion": "Templates and configuration files in every member are represented in the code model and assigned to a segment.",
+      "baseline": "0 of 5 file classes represented in the reviewed scan."
+    },
+    {
+      "defect_class": "redaction-precision",
+      "assertion": "No coverage gap in any member is caused by a code identifier.",
+      "baseline": "4 of 12 coverage notes in the reviewed scan were identifier false positives."
+    },
+    {
+      "defect_class": "report-consistency",
+      "assertion": "The unified workspace report contains no dangling section reference and no finding contradicting its own verdict.",
+      "baseline": "The reviewed report pointed at a High section that did not exist."
+    }
+  ]
+}

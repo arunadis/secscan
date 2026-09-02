@@ -1,0 +1,13 @@
+{
+  "case_id": "external-tooling-integration",
+  "kind": "seeded-workspace",
+  "target": "tests/fixtures/tooling_workspace/ (vuln_dep with recorded npm audit; crosscheck with recorded osv-scanner + semgrep reports)",
+  "source_of_truth": "ground truth declared at fixture creation for spec 008: vuln_dep pins rapid-parse@2.0.0 with advisory GHSA-AAAA-0000-AAAA absent from the bundled snapshot; crosscheck/README.md declares per-finding dispositions (ghost-lib package-absent, safe-serial version-outside-range, src/missing.py location-unresolvable MUST be suppressed; left-pad-again and the src/app.py finding MUST survive; reachability doubt never suppresses)",
+  "expectations": [
+    {
+      "defect_class": "dependency-coverage",
+      "assertion": "with the applicable tool available, 100% of seeded beyond-snapshot advisories surface in the merged report exactly once with tool provenance; 100% of deterministically disprovable external false positives are suppressed with auditable grounds and 0% of seeded true findings are suppressed; undetermined cases are retained",
+      "baseline": "spec 008 introduction; the bundled-snapshot-only baseline structurally cannot surface advisories beyond its curated subset"
+    }
+  ]
+}

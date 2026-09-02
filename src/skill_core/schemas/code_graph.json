@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "code_graph.schema.json",
+  "title": "Code Graph",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "nodes",
+    "edges"
+  ],
+  "properties": {
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "repo",
+          "type",
+          "path"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "stable id: <repo>:<path>#<symbol>"
+          },
+          "repo": {
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "file",
+              "class",
+              "function",
+              "endpoint",
+              "datastore",
+              "external-service",
+              "template",
+              "config"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "line_start": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "line_end": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "route": {
+            "type": "string"
+          },
+          "parsed": {
+            "type": "boolean",
+            "description": "false when no grammar covers this file's language. Such nodes exist at file granularity only (no symbol/line_start/line_end) so a finding in an unmodelled language can still resolve at the file tier instead of being dropped (FR-003c)."
+          },
+          "format": {
+            "type": "string",
+            "description": "detected format for template/config nodes, e.g. 'html', 'package.json' - named in coverage gaps so exclusion is never silent (FR-027)"
+          },
+          "file_class": {
+            "enum": [
+              "source",
+              "template",
+              "dependency-manifest",
+              "deploy-config",
+              "datastore-rules",
+              "client-cache-config",
+              "ai-agent-config",
+              "ai-mcp-config",
+              "prompt-artifact"
+            ],
+            "description": "security-relevant file class, so the Coverage Statement is derivable from the graph rather than recomputed (FR-029)"
+          },
+          "annotations": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "trust_boundary",
+                "authentication_required",
+                "authorization_required",
+                "sensitive_data",
+                "external_system",
+                "user_controlled_input",
+                "security_sink",
+                "template_sink",
+                "framework_control",
+                "control_bypass",
+                "fixed_prefix_sink",
+                "llm_invocation",
+                "llm_prompt_sink",
+                "tool_declaration",
+                "external_content_source",
+                "ai_config",
+                "llm_undetermined",
+                "boundary_labeled"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "from",
+          "to",
+          "type"
+        ],
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "calls",
+              "imports",
+              "contains",
+              "handler",
+              "reads",
+              "writes",
+              "publishes",
+              "consumes",
+              "authenticates-as",
+              "renders"
+            ]
+          },
+          "cross_repo": {
+            "type": "boolean"
+          },
+          "resolution": {
+            "enum": [
+              "exact",
+              "name-based"
+            ],
+            "description": "v1 call edges are name-based (research.md R2)"
+          }
+        }
+      }
+    }
+  }
+}

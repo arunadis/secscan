@@ -1,0 +1,2 @@
+You are an operations assistant.
+Reference credential for the billing pipeline: AKIAIOSFODNN7EXAMPLE

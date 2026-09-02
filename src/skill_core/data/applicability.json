@@ -1,0 +1,38 @@
+{
+  "version": "1",
+  "dataset_date": "2026-08-30",
+  "_doc": [
+    "Weakness class x architecture applicability (FR-015, FR-016).",
+    "",
+    "This file may ONLY encode impossibility that is true BY CONSTRUCTION. A wrong",
+    "suppression is a false negative, which the review that motivated this feature",
+    "showed to be the more damaging error direction, so stylistic judgements and",
+    "'unlikely in practice' claims do not belong here.",
+    "",
+    "Semantics: a weakness class is ruled out for a finding only when NONE of the",
+    "architecture shapes reachable from its location appears in requires_any. An",
+    "'undetermined' shape, or undetermined reachability, never rules anything out",
+    "(FR-013a, FR-015c). Reachability spans workspace members, so a browser-only",
+    "client whose value reaches a sibling server retains server-side classes",
+    "(FR-015a).",
+    "",
+    "Adding an entry is a data change and must require no pipeline change (FR-013c)."
+  ],
+  "rules": [
+    {
+      "cwe": "CWE-918",
+      "name": "Server-Side Request Forgery",
+      "requires_any": ["server-request-issuer"],
+      "alternatives": ["CWE-20", "CWE-116"],
+      "rationale": "Request forgery is dangerous because a server issues the attacker-influenced request from inside a trust boundary: internal services, cloud metadata, and firewall bypass become reachable. A browser-only client issues the request from the victim's own machine, with no internal network reachable and no ambient credentials attached, so none of that impact exists. The underlying code fact - an untrusted value interpolated into a URL without encoding or validation - remains real and is defensible as improper input validation (CWE-20) or improper encoding (CWE-116).",
+      "evidence": "Independent review of scan 20260830T113443Z-00250b: 'There is no server in this repo - it is a static SPA. Calling it SSRF will misroute this to the wrong SLA and the wrong reviewer.'"
+    },
+    {
+      "cwe": "CWE-611",
+      "name": "Improper Restriction of XML External Entity Reference",
+      "requires_any": ["server-request-issuer", "cli", "library"],
+      "alternatives": ["CWE-20"],
+      "rationale": "XXE requires an XML parser that resolves external entities. Browser XML parsing does not resolve external entities, so the class is not achievable in a browser-only context; the parsing of untrusted input remains a validation concern."
+    }
+  ]
+}

@@ -1,0 +1,224 @@
+{
+  "version": "1",
+  "dataset_date": "2026-09-01",
+  "sources": [
+    "https://cwe.mitre.org/data/definitions/1427.html",
+    "https://owasp.org/www-project-top-10-for-large-language-model-applications/"
+  ],
+  "_doc": "Deterministic LLM-integration recognition dataset (spec 007, R3). Anchored on import/identifier/host shape; matched text is never serialized. Consumed by pipeline.extract.llm_integration.",
+  "sdk_modules": [
+    {
+      "id": "python-openai",
+      "language": "python",
+      "patterns": [
+        "\\bfrom\\s+openai\\b",
+        "\\bimport\\s+openai\\b",
+        "\\.chat\\.completions\\.create\\s*\\(",
+        "\\bresponses\\.create\\s*\\("
+      ]
+    },
+    {
+      "id": "python-anthropic",
+      "language": "python",
+      "patterns": [
+        "\\bfrom\\s+anthropic\\b",
+        "\\bimport\\s+anthropic\\b",
+        "\\.messages\\.create\\s*\\("
+      ]
+    },
+    {
+      "id": "python-google-genai",
+      "language": "python",
+      "patterns": [
+        "\\bgoogle\\.generativeai\\b",
+        "\\bfrom\\s+google\\s+import\\s+genai\\b",
+        "\\bgenerate_content\\s*\\("
+      ]
+    },
+    {
+      "id": "python-langchain",
+      "language": "python",
+      "patterns": [
+        "\\bfrom\\s+langchain",
+        "\\bChatOpenAI\\b",
+        "\\bChatAnthropic\\b",
+        "\\.invoke\\s*\\(\\s*\\[\\s*\\{"
+      ]
+    },
+    {
+      "id": "python-ollama",
+      "language": "python",
+      "patterns": [
+        "\\bfrom\\s+ollama\\b",
+        "\\bimport\\s+ollama\\b"
+      ]
+    },
+    {
+      "id": "javascript-openai",
+      "language": "javascript",
+      "patterns": [
+        "\\bnew\\s+OpenAI\\s*\\(",
+        "\\.chat\\.completions\\.create\\s*\\(",
+        "\\bresponses\\.create\\s*\\("
+      ]
+    },
+    {
+      "id": "javascript-anthropic",
+      "language": "javascript",
+      "patterns": [
+        "@anthropic-ai/sdk",
+        "\\bnew\\s+Anthropic\\s*\\(",
+        "\\.messages\\.create\\s*\\("
+      ]
+    },
+    {
+      "id": "javascript-google-genai",
+      "language": "javascript",
+      "patterns": [
+        "@google/generative-ai",
+        "@google/genai",
+        "\\bgenerateContent\\s*\\("
+      ]
+    },
+    {
+      "id": "javascript-langchain",
+      "language": "javascript",
+      "patterns": [
+        "@langchain/openai",
+        "@langchain/anthropic",
+        "\\bnew\\s+ChatOpenAI\\s*\\("
+      ]
+    }
+  ],
+  "http_endpoints": [
+    {
+      "id": "openai-api",
+      "host_suffixes": [
+        "api.openai.com"
+      ]
+    },
+    {
+      "id": "anthropic-api",
+      "host_suffixes": [
+        "api.anthropic.com"
+      ]
+    },
+    {
+      "id": "google-genai-api",
+      "host_suffixes": [
+        "generativelanguage.googleapis.com"
+      ]
+    },
+    {
+      "id": "mistral-api",
+      "host_suffixes": [
+        "api.mistral.ai"
+      ]
+    },
+    {
+      "id": "openrouter-api",
+      "host_suffixes": [
+        "openrouter.ai"
+      ]
+    },
+    {
+      "id": "cohere-api",
+      "host_suffixes": [
+        "api.cohere.ai",
+        "api.cohere.com"
+      ]
+    },
+    {
+      "id": "bedrock-runtime",
+      "host_suffixes": [
+        "bedrock-runtime"
+      ]
+    }
+  ],
+  "local_endpoints": [
+    {
+      "id": "ollama-local",
+      "hosts": [
+        "localhost",
+        "127.0.0.1"
+      ],
+      "ports": [
+        11434
+      ]
+    },
+    {
+      "id": "lm-studio-local",
+      "hosts": [
+        "localhost",
+        "127.0.0.1"
+      ],
+      "ports": [
+        1234
+      ]
+    }
+  ],
+  "external_content_readers": [
+    {
+      "id": "http-response-body",
+      "note": "third-party content ingested from an outbound request or library response body",
+      "patterns": [
+        "\\brequests\\.(get|post|put|put|patch)\\s*\\(",
+        "\\bhttpx\\.(get|post|AsyncClient|Client)",
+        "\\burllib\\.request",
+        "\\bfetch\\s*\\(",
+        "\\.json\\s*\\(\\s*\\)$",
+        "\\.text\\b"
+      ]
+    },
+    {
+      "id": "message-and-document-intake",
+      "note": "externally authored content (mail, documents, tickets) parsed for model context",
+      "patterns": [
+        "\\bimaplib\\b",
+        "\\bpoplib\\b",
+        "\\bemail\\.message_from",
+        "\\bread_text\\s*\\(",
+        "\\bBeautifulSoup\\s*\\("
+      ]
+    }
+  ],
+  "tool_declarations": [
+    {
+      "id": "function-calling-declarations",
+      "note": "a callable exposed to the model (decorator or tools/functions list)",
+      "patterns": [
+        "@tool\\b",
+        "\\btools\\s*=\\s*\\[",
+        "\\bfunctions\\s*=\\s*\\[",
+        "\\btool_choice\\s*=",
+        "tools:\\s*\\[",
+        "\\bfunction_call\\b"
+      ]
+    }
+  ],
+  "candidate_hints": [
+    {
+      "id": "prompt-construction-without-recognized-client",
+      "note": "prompt/message assembly found but no recognized integration pattern; integration posture is undetermined at this call site",
+      "patterns": [
+        "\\bsystem_prompt\\s*=",
+        "\\bprompt\\s*=\\s*(f['\"]|['\"`]).{0,120}(\\+|\\.format\\(|\\$\\{)",
+        "\\bmessages\\s*=\\s*\\[\\s*\\{\\s*['\"]role['\"]",
+        "\\brole['\"]:\\s*['\"]system['\"]"
+      ]
+    }
+  ],
+  "boundary_patterns": [
+    {
+      "id": "explicit-data-boundary",
+      "note": "third-party content is wrapped in an explicit data-only boundary before entering model context",
+      "patterns": [
+        "<data>",
+        "</data>",
+        "\\blabel_untrusted\\b",
+        "\\buntrusted_content\\b",
+        "\\bquoted_data\\b"
+      ]
+    }
+  ]
+}

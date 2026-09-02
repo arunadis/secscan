@@ -1,0 +1,425 @@
+{
+  "version": "2",
+  "sources": [
+    "https://cwe.mitre.org/data/",
+    "https://owasp.org/Top10/"
+  ],
+  "note": "Compliance refs are included only where the CWE->control relationship is well-established and unambiguous (spec Session 2026-08-30, Q3). Not audit-ready wording.",
+  "owasp_top10_2021": {
+    "A01": "A01:2021 Broken Access Control",
+    "A02": "A02:2021 Cryptographic Failures",
+    "A03": "A03:2021 Injection",
+    "A04": "A04:2021 Insecure Design",
+    "A05": "A05:2021 Security Misconfiguration",
+    "A06": "A06:2021 Vulnerable and Outdated Components",
+    "A07": "A07:2021 Identification and Authentication Failures",
+    "A08": "A08:2021 Software and Data Integrity Failures",
+    "A09": "A09:2021 Security Logging and Monitoring Failures",
+    "A10": "A10:2021 Server-Side Request Forgery"
+  },
+  "llm_top10_2025": {
+    "LLM01": "LLM01:2025 Prompt Injection",
+    "LLM02": "LLM02:2025 Sensitive Information Disclosure",
+    "LLM05": "LLM05:2025 Improper Output Handling",
+    "LLM06": "LLM06:2025 Excessive Agency"
+  },
+  "cwes": {
+    "CWE-1004": {
+      "name": "Sensitive Cookie Without HttpOnly Flag",
+      "owasp": "A05",
+      "domain": "session-management",
+      "default_severity": 5.3
+    },
+    "CWE-1035": {
+      "name": "Using Components with Known Vulnerabilities",
+      "owasp": "A06",
+      "domain": "dependencies",
+      "default_severity": 7.5,
+      "compliance": [
+        "PCI-DSS 6.2"
+      ]
+    },
+    "CWE-1104": {
+      "name": "Use of Unmaintained Third Party Components",
+      "owasp": "A06",
+      "domain": "dependencies",
+      "default_severity": 6.5,
+      "compliance": [
+        "PCI-DSS 6.2"
+      ]
+    },
+    "CWE-116": {
+      "name": "Improper Encoding or Escaping of Output",
+      "owasp": "A03",
+      "domain": "injection",
+      "default_severity": 4.3
+    },
+    "CWE-1188": {
+      "name": "Insecure Default Initialization of Resource",
+      "owasp": "A05",
+      "domain": "infrastructure",
+      "default_severity": 6.5
+    },
+    "CWE-1275": {
+      "name": "Sensitive Cookie with Improper SameSite Attribute",
+      "owasp": "A05",
+      "domain": "session-management",
+      "default_severity": 5.3
+    },
+    "CWE-1391": {
+      "name": "Use of Weak Credentials",
+      "owasp": "A07",
+      "domain": "authentication",
+      "default_severity": 8.1
+    },
+    "CWE-1427": {
+      "name": "Improper Neutralization of Input Used for LLM Prompting",
+      "owasp": "LLM01",
+      "domain": "llm-security",
+      "default_severity": 9.1
+    },
+    "CWE-20": {
+      "name": "Improper Input Validation",
+      "owasp": "A03",
+      "domain": "api-security",
+      "default_severity": 4.3
+    },
+    "CWE-200": {
+      "name": "Exposure of Sensitive Information",
+      "owasp": "A01",
+      "domain": "data-protection",
+      "default_severity": 5.3
+    },
+    "CWE-209": {
+      "name": "Generation of Error Message Containing Sensitive Information",
+      "owasp": "A04",
+      "domain": "error-handling",
+      "default_severity": 4.3
+    },
+    "CWE-22": {
+      "name": "Path Traversal",
+      "owasp": "A01",
+      "domain": "path-traversal",
+      "default_severity": 7.5,
+      "compliance": [
+        "PCI-DSS 6.5.8"
+      ]
+    },
+    "CWE-250": {
+      "name": "Execution with Unnecessary Privileges",
+      "owasp": "LLM06",
+      "domain": "llm-security",
+      "default_severity": 7.8
+    },
+    "CWE-256": {
+      "name": "Plaintext Storage of a Password",
+      "owasp": "A02",
+      "domain": "secrets",
+      "default_severity": 7.5,
+      "compliance": [
+        "PCI-DSS 8.2.1"
+      ]
+    },
+    "CWE-259": {
+      "name": "Use of Hard-coded Password",
+      "owasp": "A07",
+      "domain": "secrets",
+      "default_severity": 8.2,
+      "compliance": [
+        "PCI-DSS 8.2.1"
+      ]
+    },
+    "CWE-269": {
+      "name": "Improper Privilege Management",
+      "owasp": "A01",
+      "domain": "authorization",
+      "default_severity": 7.8
+    },
+    "CWE-284": {
+      "name": "Improper Access Control",
+      "owasp": "A01",
+      "domain": "authorization",
+      "default_severity": 7.5,
+      "compliance": [
+        "PCI-DSS 7.1"
+      ]
+    },
+    "CWE-285": {
+      "name": "Improper Authorization",
+      "owasp": "A01",
+      "domain": "authorization",
+      "default_severity": 7.5,
+      "compliance": [
+        "PCI-DSS 7.1"
+      ]
+    },
+    "CWE-287": {
+      "name": "Improper Authentication",
+      "owasp": "A07",
+      "domain": "authentication",
+      "default_severity": 8.1,
+      "compliance": [
+        "PCI-DSS 8.1"
+      ]
+    },
+    "CWE-295": {
+      "name": "Improper Certificate Validation",
+      "owasp": "A07",
+      "domain": "api-security",
+      "default_severity": 6.5
+    },
+    "CWE-306": {
+      "name": "Missing Authentication for Critical Function",
+      "owasp": "A07",
+      "domain": "authentication",
+      "default_severity": 9.1,
+      "compliance": [
+        "PCI-DSS 8.1"
+      ]
+    },
+    "CWE-307": {
+      "name": "Improper Restriction of Excessive Authentication Attempts",
+      "owasp": "A07",
+      "domain": "authentication",
+      "default_severity": 5.9,
+      "compliance": [
+        "PCI-DSS 8.1.6"
+      ]
+    },
+    "CWE-311": {
+      "name": "Missing Encryption of Sensitive Data",
+      "owasp": "A02",
+      "domain": "encryption",
+      "default_severity": 7.5,
+      "compliance": [
+        "PCI-DSS 4.1"
+      ]
+    },
+    "CWE-319": {
+      "name": "Cleartext Transmission of Sensitive Information",
+      "owasp": "A02",
+      "domain": "encryption",
+      "default_severity": 7.4,
+      "compliance": [
+        "PCI-DSS 4.1"
+      ]
+    },
+    "CWE-327": {
+      "name": "Use of a Broken or Risky Cryptographic Algorithm",
+      "owasp": "A02",
+      "domain": "encryption",
+      "default_severity": 7.5,
+      "compliance": [
+        "PCI-DSS 4.1"
+      ]
+    },
+    "CWE-338": {
+      "name": "Use of Cryptographically Weak PRNG",
+      "owasp": "A02",
+      "domain": "encryption",
+      "default_severity": 5.3
+    },
+    "CWE-352": {
+      "name": "Cross-Site Request Forgery",
+      "owasp": "A01",
+      "domain": "api-security",
+      "default_severity": 6.5
+    },
+    "CWE-359": {
+      "name": "Exposure of Private Personal Information",
+      "owasp": "A01",
+      "domain": "pii",
+      "default_severity": 6.5
+    },
+    "CWE-384": {
+      "name": "Session Fixation",
+      "owasp": "A07",
+      "domain": "session-management",
+      "default_severity": 7.1
+    },
+    "CWE-400": {
+      "name": "Uncontrolled Resource Consumption",
+      "owasp": "A04",
+      "domain": "rate-limiting",
+      "default_severity": 5.3
+    },
+    "CWE-434": {
+      "name": "Unrestricted Upload of File with Dangerous Type",
+      "owasp": "A04",
+      "domain": "file-handling",
+      "default_severity": 8.8
+    },
+    "CWE-489": {
+      "name": "Active Debug Code",
+      "owasp": "A05",
+      "domain": "infrastructure",
+      "default_severity": 4.0
+    },
+    "CWE-494": {
+      "name": "Download of Code Without Integrity Check",
+      "owasp": "A08",
+      "domain": "dependencies",
+      "default_severity": 8.1
+    },
+    "CWE-502": {
+      "name": "Deserialization of Untrusted Data",
+      "owasp": "A08",
+      "domain": "deserialization",
+      "default_severity": 9.0
+    },
+    "CWE-522": {
+      "name": "Insufficiently Protected Credentials",
+      "owasp": "A02",
+      "domain": "secrets",
+      "default_severity": 7.5,
+      "compliance": [
+        "PCI-DSS 8.2.1"
+      ]
+    },
+    "CWE-532": {
+      "name": "Insertion of Sensitive Information into Log File",
+      "owasp": "A09",
+      "domain": "secrets",
+      "default_severity": 5.5,
+      "compliance": [
+        "PCI-DSS 3.4"
+      ]
+    },
+    "CWE-598": {
+      "name": "Use of GET Request Method With Sensitive Query Strings",
+      "owasp": "A04",
+      "domain": "api-security",
+      "default_severity": 5.3
+    },
+    "CWE-601": {
+      "name": "Open Redirect",
+      "owasp": "A01",
+      "domain": "api-security",
+      "default_severity": 6.1
+    },
+    "CWE-611": {
+      "name": "XML External Entity Reference",
+      "owasp": "A05",
+      "domain": "injection",
+      "default_severity": 7.5
+    },
+    "CWE-639": {
+      "name": "Authorization Bypass Through User-Controlled Key (IDOR)",
+      "owasp": "A01",
+      "domain": "authorization",
+      "default_severity": 8.1,
+      "compliance": [
+        "PCI-DSS 7.1"
+      ]
+    },
+    "CWE-732": {
+      "name": "Incorrect Permission Assignment for Critical Resource",
+      "owasp": "A05",
+      "domain": "infrastructure",
+      "default_severity": 7.3
+    },
+    "CWE-77": {
+      "name": "Command Injection",
+      "owasp": "A03",
+      "domain": "injection",
+      "default_severity": 8.8,
+      "compliance": [
+        "PCI-DSS 6.5.1"
+      ]
+    },
+    "CWE-778": {
+      "name": "Insufficient Logging",
+      "owasp": "A09",
+      "domain": "logging",
+      "default_severity": 4.3,
+      "compliance": [
+        "PCI-DSS 10.2"
+      ]
+    },
+    "CWE-78": {
+      "name": "OS Command Injection",
+      "owasp": "A03",
+      "domain": "injection",
+      "default_severity": 9.1,
+      "compliance": [
+        "PCI-DSS 6.5.1"
+      ]
+    },
+    "CWE-79": {
+      "name": "Cross-site Scripting",
+      "owasp": "A03",
+      "domain": "injection",
+      "default_severity": 6.1,
+      "compliance": [
+        "PCI-DSS 6.5.7"
+      ]
+    },
+    "CWE-798": {
+      "name": "Use of Hard-coded Credentials",
+      "owasp": "A07",
+      "domain": "secrets",
+      "default_severity": 9.8,
+      "compliance": [
+        "PCI-DSS 8.2.1",
+        "PCI-DSS 6.3.1"
+      ]
+    },
+    "CWE-829": {
+      "name": "Inclusion of Functionality from Untrusted Control Sphere",
+      "owasp": "A08",
+      "domain": "dependencies",
+      "default_severity": 9.8
+    },
+    "CWE-862": {
+      "name": "Missing Authorization",
+      "owasp": "A01",
+      "domain": "authorization",
+      "default_severity": 8.2,
+      "compliance": [
+        "PCI-DSS 7.1"
+      ]
+    },
+    "CWE-863": {
+      "name": "Incorrect Authorization",
+      "owasp": "A01",
+      "domain": "authorization",
+      "default_severity": 7.5,
+      "compliance": [
+        "PCI-DSS 7.1"
+      ]
+    },
+    "CWE-89": {
+      "name": "SQL Injection",
+      "owasp": "A03",
+      "domain": "injection",
+      "default_severity": 9.8,
+      "compliance": [
+        "PCI-DSS 6.5.1"
+      ]
+    },
+    "CWE-915": {
+      "name": "Improperly Controlled Modification of Dynamically-Determined Object Attributes",
+      "owasp": "A08",
+      "domain": "injection",
+      "default_severity": 7.3
+    },
+    "CWE-918": {
+      "name": "Server-Side Request Forgery (SSRF)",
+      "owasp": "A10",
+      "domain": "ssrf",
+      "default_severity": 8.6
+    },
+    "CWE-94": {
+      "name": "Code Injection",
+      "owasp": "A03",
+      "domain": "injection",
+      "default_severity": 9.0
+    },
+    "CWE-942": {
+      "name": "Permissive Cross-domain Policy with Untrusted Domains",
+      "owasp": "A05",
+      "domain": "api-security",
+      "default_severity": 5.3
+    }
+  }
+}

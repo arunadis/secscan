@@ -1,0 +1,57 @@
+{
+  "results": [
+    {
+      "packages": [
+        {
+          "package": { "name": "ghost-lib", "ecosystem": "npm" },
+          "vulnerabilities": [
+            {
+              "id": "GHSA-GHST-0000-0001",
+              "summary": "Ghost advisory for a package the project does not depend on",
+              "affected": [
+                { "ranges": [ { "type": "SEMVER", "events": [ { "introduced": "0" }, { "fixed": "9.9.9" } ] } ] }
+              ],
+              "severity": [ { "type": "CVSS_V3", "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H" } ]
+            }
+          ],
+          "version": "1.0.0"
+        }
+      ]
+    },
+    {
+      "packages": [
+        {
+          "package": { "name": "safe-serial", "ecosystem": "npm" },
+          "vulnerabilities": [
+            {
+              "id": "GHSA-SAFE-0000-0002",
+              "summary": "Deserialization flaw fixed in 3.0.0",
+              "affected": [
+                { "ranges": [ { "type": "SEMVER", "events": [ { "introduced": "0" }, { "fixed": "3.0.0" } ] } ] }
+              ]
+            }
+          ],
+          "version": "3.0.0"
+        }
+      ]
+    },
+    {
+      "packages": [
+        {
+          "package": { "name": "left-pad-again", "ecosystem": "npm" },
+          "vulnerabilities": [
+            {
+              "id": "GHSA-PAD-0000-0003",
+              "summary": "Padding oracle in left-pad-again",
+              "affected": [
+                { "ranges": [ { "type": "SEMVER", "events": [ { "introduced": "0" }, { "fixed": "1.2.4" } ] } ] }
+              ],
+              "severity": [ { "type": "CVSS_V3", "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N" } ]
+            }
+          ],
+          "version": "1.2.3"
+        }
+      ]
+    }
+  ]
+}

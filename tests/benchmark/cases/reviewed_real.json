@@ -1,0 +1,59 @@
+{
+  "case_id": "reviewed-real-angular2-hn",
+  "kind": "reviewed-real",
+  "target": "codev-workshops/angular2-hn@b4677f3",
+  "source_of_truth": "Independent review of scan 20260830T113443Z-00250b. Every claim in that scan was checked against the source by a reviewer who did not build this pipeline. Where the reviewer marked a conclusion as inference rather than something exercised end to end, the expectation below does the same. If a future review disputes an expectation recorded here, this file is wrong - the reviewer is the source of truth, not the fixture.",
+  "_status": "Asserted as of Phase 4: evidence-integrity (US1), classification and calibration (US2). The remaining classes are declared here so the gaps stay visible, and are filled in by their own phases: coverage in Phase 5 (T060), dependency-coverage in Phase 6 (T074), redaction-precision in Phase 7 (T086), report-consistency in Phase 8. Note that dependency-coverage is partially met already - stack_currency correctly identifies Angular 9.0.1, TypeScript 3.7.5 and rxjs 6.5.4 as past end of support - but advisory ingestion itself is Phase 6.",
+  "expectations": [
+    {
+      "defect_class": "evidence-integrity",
+      "assertion": "Every reported location resolves to a declared symbol with an exactly correct line range, or is labelled file-tier. No finding is published while admitting its location could not be matched to the code model.",
+      "baseline": "2 of 2 findings reported a line number wrong by 1-2 lines; 1 of 2 was published with the verification gap 'the reported location could not be matched to the code graph'."
+    },
+    {
+      "defect_class": "evidence-integrity",
+      "assertion": "A rendered trail contains only nodes from the traced path, and is omitted entirely when no path was traced. Supporting evidence appears under Evidence and never with dataflow notation.",
+      "baseline": "The single rendered 'Evidence trail' contained 3 off-path entries out of 8, including an unrelated pluralization pipe, a module barrel file, and firebase.json, strung together with dataflow arrows."
+    },
+    {
+      "defect_class": "evidence-integrity",
+      "assertion": "No reproduction block states an observed behaviour for a finding the pipeline did not verify end to end; unverified findings state the outcome to check and say the scanner did not observe it.",
+      "baseline": "2 of 2 blocks asserted 'The value reaches the unsafe operation unchanged' with 0 of 2 findings statically verified. When the reviewer actually ran it, the canary did NOT arrive unchanged - the framework sanitizer stripped its attribute."
+    },
+    {
+      "defect_class": "evidence-integrity",
+      "assertion": "Every emitted concrete trigger has a success criterion achievable against the code as written; where none exists the trigger is omitted with a stated reason.",
+      "baseline": "The request-forgery probe asked the reader to pass 'http://127.0.0.1:9/<canary>' to prove an outbound fetch to a local port, but the value is interpolated after a fixed scheme and host, so no such request can ever be issued. The report's own impact paragraph contradicted its reproduction steps."
+    },
+    {
+      "defect_class": "classification",
+      "assertion": "No finding carries a weakness class structurally impossible for its reachable architectures. CWE-918 on a browser-only target is remapped to CWE-20/CWE-116 with the remap recorded.",
+      "baseline": "1 of 2 findings was filed as Server-Side Request Forgery (CWE-918, OWASP A10) against a static browser-only application with no server."
+    },
+    {
+      "defect_class": "calibration",
+      "assertion": "Every filed finding's published severity band matches the band the independent review assessed. The injection finding lands at Low/informational with the framework sanitizer credited.",
+      "baseline": "2 of 2 severities overstated: both filed at 4.3 (Medium); the reviewer rated one Low/defence-in-depth and the other Informational. One carried confidence 0.85 while its own verification note said reachability was unconfirmed."
+    },
+    {
+      "defect_class": "coverage",
+      "assertion": "All five security-relevant file classes are represented in the code model and assigned to a segment, and the four [innerHTML] template sinks are discovered by the pipeline with zero manual steps.",
+      "baseline": "0 of 5 file classes represented. No markup template was analyzed at all; the four raw-HTML sinks were found by a manual step after segment analysis, and finding them changed the finding's conclusion and severity."
+    },
+    {
+      "defect_class": "dependency-coverage",
+      "assertion": "Runtime advisories are reported as findings, or the dependency domain is reported as a blocking gap carrying a runnable command. The end-of-support stack is reported independently of any advisory.",
+      "baseline": "The domain produced nothing. A native audit run by the reviewer found 272 advisories (10 critical, 154 high), of which 23 (15 high) were confined to runtime dependencies - a larger and more concrete exposure than either filed finding, on a stack years past end of life."
+    },
+    {
+      "defect_class": "redaction-precision",
+      "assertion": "No coverage gap is caused by a code identifier, import specifier, or module path, while credential detection recall stays at 100%.",
+      "baseline": "4 of 12 coverage notes reported 'an unclassifiable high-entropy value' and all four were false positives: an import path, a flag name in a comment, two test framework class names, and a long method name (measured entropies 4.025-4.208 against a threshold of 4.0)."
+    },
+    {
+      "defect_class": "report-consistency",
+      "assertion": "Every internal reference names a section present in the report, and every severity pointer is derived from the finding's own published band.",
+      "baseline": "The Recommendations section told the reader to see a Medium finding 'in the High section'. There is no High section."
+    }
+  ]
+}
