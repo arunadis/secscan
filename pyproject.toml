@@ -38,7 +38,14 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-skill_core = ["SKILL.md", "prompts/*.md", "schemas/*.json", "cwe_map.json"]
+skill_core = [
+    "SKILL.md",
+    "prompts/*.md",
+    "schemas/*.json",
+    "cwe_map.json",
+    "data/*.json",
+    "data/advisories/*.json",
+]
 profiles = ["*.yaml"]
 
 [tool.pytest.ini_options]
