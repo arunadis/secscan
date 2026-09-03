@@ -44,6 +44,31 @@ _FILES = {
         'lriGrtkfTiuDapkLiUCog";\n'
         "}\n"
     ),
+    # Feature 010 (SEC-0080 class): credential-named variables assigned from
+    # other environment variables. Runtime wiring, not credentials — and the
+    # classification is path-agnostic (FR-000), so a migration script and a
+    # compose file are both exercised.
+    "migration/p0/verify-account.sh": (
+        "#!/usr/bin/env bash\n"
+        "use_prod() {\n"
+        '  export AWS_ACCESS_KEY_ID="$AWS_DEVIN_PROD_ACCESS_KEY_ID"\n'
+        '  export AWS_SECRET_ACCESS_KEY="$AWS_DEVIN_PROD_SECRET_ACCESS_KEY"\n'
+        "  unset AWS_SESSION_TOKEN || true\n"
+        "}\n"
+        "\n"
+        "use_dev() {\n"
+        '  export AWS_ACCESS_KEY_ID="$AWS_DEVIN_READONLY_ACCESS_KEY_ID"\n'
+        '  export AWS_SECRET_ACCESS_KEY="$AWS_DEVIN_READONLY_SECRET_ACCESS_KEY"\n'
+        "  unset AWS_SESSION_TOKEN || true\n"
+        "}\n"
+    ),
+    "deploy/docker-compose.yml": (
+        "services:\n"
+        "  api:\n"
+        "    environment:\n"
+        '      DB_PASSWORD: "${DB_PASSWORD:?DB_PASSWORD is required}"\n'
+        '      API_TOKEN: "%API_TOKEN%"\n'
+    ),
     # Test-code credential: reported, graded lower (FR-010).
     "src/test/java/com/example/AuthTest.java": (
         "package com.example;\n"
@@ -140,6 +165,38 @@ def test_suppression_decisions_are_inspectable_in_artifacts(scanned) -> None:
         assert entry["reason"]
         assert entry["decision"] in ("exempt-identifier", "exempt-message")
         assert "value" not in entry  # values never appear in artifacts
+
+
+def test_runtime_references_produce_no_finding(scanned) -> None:
+    """Feature 010 SC-001 / FR-000: `"$VAR"` wiring is silent end to end, at any path."""
+    _, _, findings = scanned
+    by_file = _by_file(findings)
+    assert not [f for f in by_file if f.startswith(("migration/", "deploy/"))], by_file.keys()
+    # The genuine format-matched credential is unaffected.
+    assert any(
+        f["detection"] == "format"
+        for f in by_file["src/main/java/com/example/AuthConfig.java"]
+    )
+
+
+def test_runtime_reference_exemptions_are_inspectable_in_artifacts(scanned) -> None:
+    """Feature 010 FR-005 / SC-004: every reference exemption is recorded, never silent."""
+    root, _, _ = scanned
+    exempted = [
+        item
+        for packet in sorted((root / ".secscan" / "context-packets").glob("*.json"))
+        for item in json.loads(packet.read_text())["payload"]["redaction"].get(
+            "exempted_items", []
+        )
+        if item["decision"] == "exempt-reference"
+    ]
+    origins = {e["origin"] for e in exempted}
+    assert any(o.endswith("verify-account.sh") for o in origins), origins
+    for entry in exempted:
+        assert entry["classification"].startswith("runtime-reference:")
+        assert entry["rule"] in ("assigned-secret", "entropy-candidate")
+        assert entry["reason"]
+        assert "value" not in entry
 
 
 def test_no_credential_value_reaches_any_artifact(scanned) -> None:

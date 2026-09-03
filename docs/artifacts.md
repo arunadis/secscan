@@ -69,3 +69,11 @@ Credential values. The redactor runs before context packets are built, an
 artifact-wide redaction sweep catches the rest, and config validation rejects key
 values under `llm.endpoint` before scanning begins. Only environment-variable
 *names* are ever stored.
+
+Every value the redactor deliberately left visible is recorded under
+`context-packets/*.json → redaction.exempted_items` with `origin`, `line`, `rule`,
+`classification`, `reason`, and a `decision` of `exempt-identifier` (a declared
+name), `exempt-message` (a prose literal) or `exempt-reference` (a runtime
+reference such as `"$VAR"`, classified `runtime-reference:<family>`). Values are
+omitted from the record. Location tokens protected in reproduction prose
+(`exempt-location`) are an in-process decision and are not serialised.

@@ -296,7 +296,9 @@ These are enforced by tests, not just intent:
   cannot confidently classify is *blocked*, not passed through. Because the
   redactor must locate every credential anyway, it doubles as the authoritative
   hard-coded-secret detector — so secrets are still *reported* while their values
-  appear nowhere.
+  appear nowhere. Environment-variable references (`"$VAR"`, `"${VAR}"`, `"%VAR%"`,
+  template and CI expressions) are recognised as runtime wiring and never reported
+  as hard-coded credentials.
 - **No attacks are executed.** Verification is static: a traced source-to-sink
   path decides `verified` / `plausible` / `disproven`.
 - **Reproduction steps are benign.** Triggers use non-destructive canary values,

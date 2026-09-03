@@ -22,17 +22,35 @@ def test_false_positive_corpus_produces_zero_findings() -> None:
         assert result.blocked == 0, f"blocked ({why}): {result.warnings}"
 
 
-def test_every_suppression_is_an_inspectable_decision() -> None:
-    """FR-004: suppressed matches record file, line, rule, and reason."""
-    from tests.fixtures.identifier_corpus import IDENTIFIERS
+def test_runtime_reference_corpus_produces_zero_findings() -> None:
+    """Feature 010 FR-012 / SC-001: `"$VAR"` wiring is never a credential finding."""
+    from tests.fixtures.runtime_reference_corpus import REFERENCES
 
     redactor = Redactor()
-    for line, _token, _why in IDENTIFIERS:
-        result = redactor.redact(line, origin="src/app.ts")
+    for origin, line, why in REFERENCES:
+        result = redactor.redact(line, origin=origin)
+        findings = findings_from_hits(result.hits, "repo")
+        assert findings == [], f"finding from runtime reference ({why}): {line}"
+        assert result.blocked == 0, f"blocked ({why}): {result.warnings}"
+        assert [e.decision for e in result.exempted] == ["exempt-reference"] * len(
+            result.exempted
+        ) and result.exempted, f"no exempt-reference decision ({why})"
+
+
+def test_every_suppression_is_an_inspectable_decision() -> None:
+    """FR-004 (003) / FR-005 (010): suppressed matches record file, line, rule, reason."""
+    from tests.fixtures.identifier_corpus import IDENTIFIERS
+    from tests.fixtures.runtime_reference_corpus import REFERENCES
+
+    redactor = Redactor()
+    samples = [("src/app.ts", line) for line, _token, _why in IDENTIFIERS]
+    samples += [(origin, line) for origin, line, _why in REFERENCES]
+    for origin, line in samples:
+        result = redactor.redact(line, origin=origin)
         for decision in result.exempted:
-            assert decision.origin == "src/app.ts"
+            assert decision.origin == origin
             assert decision.line >= 1
             assert decision.rule
             assert decision.reason
-            assert decision.decision in ("exempt-identifier", "exempt-message")
+            assert decision.decision in ("exempt-identifier", "exempt-message", "exempt-reference")
             assert decision.classification

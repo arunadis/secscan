@@ -339,6 +339,32 @@ def test_context_packet_must_declare_redaction_applied() -> None:
         validate("context_packet", doc)
 
 
+def _exemption(decision: str) -> dict:
+    return {
+        "origin": "migration/p0/verify-account.sh",
+        "line": 47,
+        "rule": "assigned-secret",
+        "classification": "runtime-reference:shell-bare",
+        "reason": "every letter and digit lies inside a well-formed reference",
+        "decision": decision,
+    }
+
+
+def test_context_packet_accepts_exempt_reference_decision() -> None:
+    """Feature 010, contract R5: additive enum member, no schema_version bump."""
+    doc = valid_context_packet()
+    doc["redaction"]["exempted_items"] = [_exemption("exempt-reference")]
+    validate("context_packet", doc)
+
+
+def test_context_packet_rejects_exempt_location_decision() -> None:
+    """exempt-location arises only in reproduction text and never reaches a packet."""
+    doc = valid_context_packet()
+    doc["redaction"]["exempted_items"] = [_exemption("exempt-location")]
+    with pytest.raises(SchemaError):
+        validate("context_packet", doc)
+
+
 def test_workspace_requires_at_least_one_member() -> None:
     doc = valid_workspace()
     doc["members"] = []

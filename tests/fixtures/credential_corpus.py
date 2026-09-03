@@ -40,6 +40,55 @@ CREDENTIALS: tuple[tuple[str, str, str], ...] = (
         'throw new Error("Invalid token: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY");',
         "real key embedded in a prose message that names a credential — must not be exempted",
     ),
+    # ---- feature 010: reference look-alikes (FR-007, FR-013, contract R3) ----
+    # A `$`, `%` or `${…}` wrapper never exempts literal material it contains.
+    # The first three are the recall GAIN: before 010 the blanket `${…}`
+    # placeholder silently exempted a literal default (research R3).
+    (
+        "deploy/docker-compose.yml",
+        'password: "${DB_PASSWORD:-hunter2hunter2}"',
+        "literal default operand of :- inside a braced reference",
+    ),
+    (
+        "deploy/entrypoint.sh",
+        'password: "${DB_PASSWORD:=hunter2hunter2}"',
+        "literal operand of := inside a braced reference",
+    ),
+    (
+        "deploy/entrypoint.sh",
+        'password: "${DB_PASSWORD:+hunter2hunter2}"',
+        "literal operand of :+ inside a braced reference",
+    ),
+    (
+        "config/settings.sh",
+        'password = "$PREFIX-hunter2hunter2"',
+        "reference concatenated with a literal — letters outside the reference",
+    ),
+    (
+        "config/settings.sh",
+        'password = "hunter2hunter2$SUFFIX"',
+        "literal concatenated with a reference",
+    ),
+    (
+        "config/settings.py",
+        'password = "pa$$w0rd-really-long"',
+        "literal that merely contains a `$` marker",
+    ),
+    (
+        "config/settings.sh",
+        'password = "${DB_PASSWORD"',
+        "unbalanced braced reference is a literal (FR-003)",
+    ),
+    (
+        "config/settings.bat",
+        'password = "%DB_PASSWORD"',
+        "unterminated batch reference is a literal (FR-003)",
+    ),
+    (
+        "deploy/docker-compose.yml",
+        'key: "${AKIAIOSFODNN7EXAMPLE}"',
+        "known credential format inside a reference-like wrapper (FR-008)",
+    ),
     # ---- test code: still reported, graded lower (FR-010) ----
     (
         "src/test/java/com/example/DefaultJwtServiceTest.java",

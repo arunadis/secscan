@@ -371,6 +371,197 @@ def test_credential_corpus_recall_is_100_percent(redactor: Redactor) -> None:
         assert result.redacted >= 1, f"missed credential ({why}): {line}"
 
 
+# ------------------------- feature 010: runtime references (contracts R1, R2, R3)
+#
+# SEC-0080 class: a credential-named key assigned from `"$VAR"` (or any other
+# indirection expression) is runtime wiring, not a hard-coded credential. The
+# classifier is a pure function of the quoted value: every letter and digit must
+# lie inside a well-formed reference (FR-002); anything else is a literal.
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "$AWS_DEVIN_PROD_SECRET_ACCESS_KEY",
+        "${DB_PASSWORD}",
+        "%DB_PASSWORD%",
+        "{{ vault_secret }}",
+        "${{ secrets.GH_TOKEN }}",
+        "$(cat /run/secrets/key)",
+        "$DB_USER:$DB_PASSWORD",
+        "${HOST}/${TOKEN}",
+        "${X:-}",
+        "${X:-$Y}",
+        "${X:-changeme}",
+        "${DB_PASSWORD:?DB_PASSWORD is required}",
+    ],
+)
+def test_runtime_reference_is_classified(value: str) -> None:
+    """R1 MUST-classify list (FR-001, FR-002, FR-003, FR-004)."""
+    from pipeline.redact import classify_runtime_reference
+
+    assert classify_runtime_reference(value) is not None, value
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "hunter2hunter2",
+        "$PREFIX-hunter2hunter2",
+        "hunter2hunter2$SUFFIX",
+        "pa$$w0rd-really-long",
+        "${NAME",
+        "%NAME",
+        "{{ name",
+        "${X:-hunter2hunter2}",
+        "${X:=hunter2hunter2}",
+        "${X:+hunter2hunter2}",
+        "abc%20def%20secret",
+        "",
+        "-:/",
+    ],
+)
+def test_literal_is_not_classified_as_reference(value: str) -> None:
+    """R1 MUST-NOT-classify list (FR-002, FR-003): recall wins every tie."""
+    from pipeline.redact import classify_runtime_reference
+
+    assert classify_runtime_reference(value) is None, value
+
+
+def test_runtime_reference_records_families_names_and_operators() -> None:
+    from pipeline.redact import classify_runtime_reference
+
+    joined = classify_runtime_reference("$DB_USER:$DB_PASSWORD")
+    assert joined is not None
+    assert joined.families == ("shell-bare", "shell-bare")
+    assert joined.names == ("DB_USER", "DB_PASSWORD")
+    assert joined.operators == ()
+
+    guarded = classify_runtime_reference("${DB_PASSWORD:?DB_PASSWORD is required}")
+    assert guarded is not None
+    assert guarded.families == ("shell-braced",)
+    assert guarded.names == ("DB_PASSWORD",)
+    assert guarded.operators == (":?",)
+
+    # Determinism: a pure function of the value.
+    assert classify_runtime_reference("$A:$B") == classify_runtime_reference("$A:$B")
+
+
+def test_runtime_references_are_exempt_at_the_redaction_layer() -> None:
+    """R2 / FR-005a: visible in context, recorded, never a hit."""
+    from tests.fixtures.runtime_reference_corpus import REFERENCES
+
+    redactor = Redactor()
+    for origin, line, why in REFERENCES:
+        result = redactor.redact(line, origin=origin)
+        assert result.text == line, f"redacted a reference ({why}): {result.text}"
+        assert result.hits == [], f"hit on a reference ({why})"
+        assert result.blocked == 0, f"blocked a reference ({why}): {result.warnings}"
+        decisions = [e for e in result.exempted if e.decision == "exempt-reference"]
+        assert len(decisions) >= 1, f"no exempt-reference decision ({why})"
+        for decision in decisions:
+            assert decision.origin == origin
+            assert decision.line == 1
+            assert decision.classification.startswith("runtime-reference:")
+            assert decision.reason
+
+
+def test_reference_exemption_names_the_rule_and_the_referenced_variable() -> None:
+    redactor = Redactor()
+    result = redactor.redact(
+        '  export AWS_SECRET_ACCESS_KEY="$AWS_DEVIN_PROD_SECRET_ACCESS_KEY"',
+        origin="migration/p0/verify-account.sh",
+    )
+    (decision,) = result.exempted
+    assert decision.rule == "assigned-secret"
+    assert decision.classification == "runtime-reference:shell-bare"
+    assert "AWS_DEVIN_PROD_SECRET_ACCESS_KEY" in decision.reason
+
+    entropy = redactor.redact(
+        'export DB_PASSWORD="${SKILLHUNT_PORTAL_BACKEND_PROD_DB_PASSWORD_2024_v3}"',
+        origin="deploy/entrypoint.sh",
+    )
+    assert entropy.clean, entropy.warnings
+    # Both paths record their decision: the assignment rule and the entropy
+    # candidate on the 43-char name (research R4).
+    assert {e.rule for e in entropy.exempted} == {"assigned-secret", "entropy-candidate"}
+    assert all(e.decision == "exempt-reference" for e in entropy.exempted)
+
+
+def test_runtime_reference_corpus_as_a_whole_is_clean() -> None:
+    from tests.fixtures.runtime_reference_corpus import corpus_text
+
+    result = Redactor().redact(corpus_text(), origin="deploy/all.sh")
+    assert result.clean, result.warnings
+    assert result.text == corpus_text()
+
+
+# ------------------------- feature 010: known-safe location tokens (contract R4)
+#
+# The reproduction builder redacts its own prose after composing it, and a long
+# slash-joined repository path on a line that also names a credential symbol is
+# eaten by the entropy heuristic — "Inspect [REDACTED:high-entropy-secret].sh".
+# Tokens the scanner itself placed (file, symbol) are already published in the
+# structured location, so protecting them in prose adds no exposure.
+
+_PATH = "skillhunt-portal-backend/migration/p0/verify-account.sh"
+_TRIGGER = (
+    f"Inspect {_PATH}#AWS_SECRET_ACCESS_KEY in a local checkout and grep for the "
+    "assignment (marker SECSCAN-CANARY-1 denotes the redacted literal in this report)."
+)
+
+
+def test_known_safe_tokens_survive_heuristic_redaction(redactor: Redactor) -> None:
+    result = redactor.redact(_TRIGGER, origin="reproduction.trigger",
+                             known_safe=(_PATH, "AWS_SECRET_ACCESS_KEY"))
+    assert result.text == _TRIGGER
+    assert result.clean, result.warnings
+    assert [e.decision for e in result.exempted] == ["exempt-location"]
+    assert result.exempted[0].classification == "location-token"
+    assert result.exempted[0].rule == "entropy-candidate"
+
+
+def test_known_safe_tokens_do_not_protect_a_value_elsewhere(redactor: Redactor) -> None:
+    """FR-010: locations are protected, values are not."""
+    value = "Xh8Kq2Lm9Rt4Wv7Zy1Bc3Df6Gj0Np5Sa"
+    result = redactor.redact(f"{_TRIGGER} secret={value}", origin="reproduction.trigger",
+                             known_safe=(_PATH, "AWS_SECRET_ACCESS_KEY"))
+    assert _PATH in result.text
+    assert value not in result.text
+    assert result.redacted == 1
+
+
+def test_known_safe_never_overrides_a_format_rule(redactor: Redactor) -> None:
+    """A path that literally contains a credential format is still redacted."""
+    token = "AKIAIOSFODNN7EXAMPLE"
+    result = redactor.redact(f"Inspect build/{token}/out.sh in a local checkout",
+                             origin="reproduction.trigger", known_safe=(token,))
+    assert token not in result.text
+    assert "aws-access-key" in result.labels
+
+
+def test_empty_known_safe_is_byte_identical_to_the_default(redactor: Redactor) -> None:
+    text = f"{_TRIGGER}\nconst blob = 'Zk3Qp9Xr7Lm2Vn8Bt4Wy6Cd0Hj5Gs1F';\n"
+    default = redactor.redact(text, origin="x")
+    explicit = redactor.redact(text, origin="x", known_safe=())
+    assert default.text == explicit.text
+    assert default.redacted == explicit.redacted and default.blocked == explicit.blocked
+
+
+def test_known_safe_token_that_would_be_blocked_is_preserved(redactor: Redactor) -> None:
+    """Case (e): the token has no identifier shape and would otherwise be BLOCKED."""
+    path = "build/ABCDEFGHJKLMNPQRSTUVWXYZ2345/out.sh"
+    text = f"Inspect {path}#run in a local checkout and grep for the assignment."
+    before = redactor.redact(text, origin="reproduction.trigger")
+    assert before.blocked == 1, "precondition: this path is blocked without protection"
+    after = redactor.redact(text, origin="reproduction.trigger", known_safe=(path,))
+    assert after.text == text
+    assert after.clean, after.warnings
+    (decision,) = after.exempted
+    assert decision.decision == "exempt-location"
+    assert "already published" in decision.reason
+
+
 def test_identifier_gate_sees_through_packet_line_numbers(redactor: Redactor) -> None:
     """Packet source is line-numbered (FR-002); the prefix must not defeat the gate."""
     result = redactor.redact(

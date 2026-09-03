@@ -65,7 +65,7 @@
               "rule": { "type": "string" },
               "classification": { "type": "string" },
               "reason": { "type": "string" },
-              "decision": { "enum": ["exempt-identifier", "exempt-message"] }
+              "decision": { "enum": ["exempt-identifier", "exempt-message", "exempt-reference"] }
             }
           }
         },

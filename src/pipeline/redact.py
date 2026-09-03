@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 RULES_VERSION = "1"
@@ -83,8 +84,13 @@ BUILTIN_RULES: tuple[Rule, ...] = (
 
 #: Values that look like secrets by shape but are obviously placeholders —
 #: including this redactor's own markers, so redaction is idempotent.
+#:
+#: Braced shell references (`${NAME}`) are deliberately NOT listed here any more.
+#: Feature 010 found the blanket `\$\{[^}]*\}` alternative was a recall hole: it
+#: exempted `${DB_PASSWORD:-hunter2hunter2}` wholesale, literal default and all.
+#: References are now classified structurally by `classify_runtime_reference`.
 _PLACEHOLDER = _c(
-    r"(?i)^(?:x{3,}|\*{3,}|\.{3,}|<[^>]*>|\$\{[^}]*\}|changeme|placeholder|example|"
+    r"(?i)^(?:x{3,}|\*{3,}|\.{3,}|<[^>]*>|changeme|placeholder|example|"
     r"your[_\-]?[a-z]*|dummy|redacted|todo|none|null|test|sample|foo|bar|"
     r"\[REDACTED:[^\]]*\]|\[BLOCKED:[^\]]*\])$"
 )
@@ -238,6 +244,213 @@ def _is_placeholder(value: str) -> bool:
     return bool(_PLACEHOLDER.match(value.strip()))
 
 
+# ------------------------------------------------------ runtime references
+#
+# Feature 010 (SEC-0080 class). `export AWS_SECRET_ACCESS_KEY="$AWS_PROD_SECRET"`
+# is the *recommended* way to wire a credential — the value is supplied by the
+# environment when the script runs and nothing secret exists in the source. The
+# `assigned-secret` rule cannot tell that from a literal, and the entropy path
+# fires on long reference NAMES (`${SKILLHUNT_…_PROD_DB_PASSWORD_2024_v3}` has
+# entropy 4.26), so both paths consult one classifier (research R4).
+#
+# The classifier is a pure function of the quoted value with a single invariant
+# (research R2): every letter and digit must lie inside a well-formed indirection
+# expression. That one rule accepts `"$A:$B"` and `"${HOST}/${TOKEN}"`, and
+# rejects `"$PREFIX-hunter2hunter2"`, `"pa$$w0rd"`, `"${NAME"` and
+# `"${X:-hunter2hunter2}"` — so no literal alphanumeric material can ever be
+# exempted, which is what makes it safe under Principle III.
+
+
+@dataclass(frozen=True)
+class RuntimeReference:
+    """A quoted value that resolves to a credential only when the program runs."""
+
+    #: expression families in order of appearance
+    families: tuple[str, ...]
+    #: referenced identifiers where extractable ("" for opaque expression bodies)
+    names: tuple[str, ...]
+    #: shell parameter-expansion operators seen (":-", ":=", ":+", ":?", …)
+    operators: tuple[str, ...]
+
+
+_REF_BARE = _c(r"\$([A-Za-z_]\w*)")
+_REF_BATCH = _c(r"%([A-Za-z_]\w*)%")
+_REF_IDENT = _c(r"^[A-Za-z_]\w*$")
+#: `${NAME<op>operand}` — `:-` `-` `:=` `=` `:+` `+` `:?` `?`
+_REF_EXPANSION = _c(r"^([A-Za-z_]\w*)(:?[-=+?])(.*)$", re.DOTALL)
+#: operators whose operand is a diagnostic message, never the value
+_DIAGNOSTIC_OPERATORS = frozenset({":?", "?"})
+
+
+def _match_bracket(value: str, start: int, open_ch: str, close_ch: str) -> int:
+    """Index just past the bracket matching ``value[start]``, or -1 if unbalanced."""
+    depth = 0
+    for index in range(start, len(value)):
+        char = value[index]
+        if char == open_ch:
+            depth += 1
+        elif char == close_ch:
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    return -1
+
+
+def _find_close(value: str, start: int, close: str) -> int:
+    """Index just past the first ``close`` at or after ``start``, or -1."""
+    index = value.find(close, start)
+    return -1 if index < 0 else index + len(close)
+
+
+def _operand_is_safe(operand: str) -> bool:
+    """A `:-`/`:=`/`:+` operand can become the value: it must itself be harmless."""
+    return (
+        not operand
+        or _is_placeholder(operand)
+        or classify_runtime_reference(operand) is not None
+    )
+
+
+def classify_runtime_reference(value: str) -> RuntimeReference | None:
+    """Classify ``value`` as runtime indirection, or ``None`` if it may hold a literal.
+
+    Returns a reference **iff** every letter and digit lies inside one well-formed
+    expression of a supported family (FR-002). Unbalanced delimiters, literal
+    characters outside an expression, and credential-like `:-`/`:=`/`:+` operands
+    all fail classification (FR-003, FR-007): the caller then treats the value
+    exactly as before. Pure, deterministic, origin-independent (FR-000).
+    """
+    families: list[str] = []
+    names: list[str] = []
+    operators: list[str] = []
+    index, length = 0, len(value)
+    while index < length:
+        char = value[index]
+        if value.startswith("${{", index):  # ci-expr, before shell-braced
+            end = _find_close(value, index + 3, "}}")
+            if end < 0:
+                return None
+            families.append("ci-expr")
+            names.append(value[index + 3 : end - 2].strip())
+            index = end
+        elif value.startswith("${", index):
+            end = _match_bracket(value, index + 1, "{", "}")
+            if end < 0:
+                return None
+            body = value[index + 2 : end - 1]
+            expansion = _REF_EXPANSION.match(body)
+            if expansion:
+                name, operator, operand = expansion.groups()
+                if operator not in _DIAGNOSTIC_OPERATORS and not _operand_is_safe(operand):
+                    return None
+                operators.append(operator)
+            elif _REF_IDENT.match(body):
+                name = body
+            else:
+                return None
+            families.append("shell-braced")
+            names.append(name)
+            index = end
+        elif value.startswith("$(", index):
+            end = _match_bracket(value, index + 1, "(", ")")
+            if end < 0:
+                return None
+            families.append("shell-subst")
+            names.append("")
+            index = end
+        elif char == "$":
+            bare = _REF_BARE.match(value, index)
+            if bare:
+                families.append("shell-bare")
+                names.append(bare.group(1))
+                index = bare.end()
+            else:
+                index += 1  # a lone `$` is punctuation
+        elif char == "`":
+            end = value.find("`", index + 1)
+            if end < 0:
+                return None
+            families.append("shell-subst")
+            names.append("")
+            index = end + 1
+        elif value.startswith("{{", index):
+            end = _find_close(value, index + 2, "}}")
+            if end < 0:
+                return None
+            families.append("template")
+            names.append(value[index + 2 : end - 2].strip())
+            index = end
+        elif char == "%":
+            batch = _REF_BATCH.match(value, index)
+            if batch:
+                families.append("batch")
+                names.append(batch.group(1))
+                index = batch.end()
+            else:
+                index += 1  # a lone `%` is punctuation
+        elif char.isalnum():
+            return None  # literal material outside any reference
+        else:
+            index += 1  # punctuation / whitespace between references
+    if not families:
+        return None
+    return RuntimeReference(tuple(families), tuple(names), tuple(operators))
+
+
+def _reference_reason(reference: RuntimeReference) -> str:
+    named = ", ".join(sorted({n for n in reference.names if n})) or "an opaque expression"
+    kinds = ", ".join(sorted(set(reference.families)))
+    return (
+        f"every letter and digit lies inside a well-formed {kinds} reference to {named}; "
+        "a reference exposes an environment-variable name, not a value"
+    )
+
+
+def _reference_classification(reference: RuntimeReference) -> str:
+    return "runtime-reference:" + ",".join(sorted(set(reference.families)))
+
+
+def _protected_spans(text: str, tokens: Sequence[str]) -> list[tuple[int, int, str]]:
+    """Every occurrence of every non-empty known-safe token, in deterministic order."""
+    spans: list[tuple[int, int, str]] = []
+    for token in sorted({t for t in tokens if t}):
+        position = text.find(token)
+        while position >= 0:
+            spans.append((position, position + len(token), token))
+            position = text.find(token, position + len(token))
+    return sorted(spans)
+
+
+def _protecting_token(
+    protected: list[tuple[int, int, str]], start: int, end: int
+) -> str | None:
+    for span_start, span_end, token in protected:
+        if start < span_end and end > span_start:
+            return token
+    return None
+
+
+def _enclosing_value(line: str, start: int, end: int) -> str:
+    """The assigned value that contains ``line[start:end]`` — a quoted literal if one
+    encloses the span, otherwise the whitespace-delimited token (right of any `=`/`:`)."""
+    for match in _QUOTED.finditer(line):
+        if match.start() < start and end <= match.end() - 1:
+            return match.group()[1:-1]
+    left = start
+    while left > 0 and not line[left - 1].isspace():
+        left -= 1
+    right = end
+    while right < len(line) and not line[right].isspace():
+        right += 1
+    token = line[left:right].rstrip(";,")
+    for separator in ("=", ":"):
+        head, sep, tail = token.partition(separator)
+        if sep and len(head) < start - left:
+            token = tail
+            left += len(head) + 1
+    return token
+
+
 _ASSIGNMENT = re.compile(r"([A-Za-z_$][\w.$\-]*)\s*[:=]\s*$")
 
 
@@ -334,13 +547,15 @@ class ExemptionDecision:
 
     origin: str
     line: int
-    #: rule/label that matched, or "entropy-candidate" for exempted entropy hits
+    #: rule/label that matched ("assigned-secret" for reference exemptions on the
+    #: assignment path), or "entropy-candidate" for exempted entropy hits
     rule: str
     value: str
-    #: "identifier" shape name | "message-string" | "credential-format" | "ambiguous-literal"
+    #: "identifier" shape name | "message-string" | "runtime-reference:<families>"
+    #: | "location-token" | "credential-format" | "ambiguous-literal"
     classification: str
     reason: str
-    #: "exempt-identifier" | "exempt-message"
+    #: "exempt-identifier" | "exempt-message" | "exempt-reference" | "exempt-location"
     decision: str
 
 
@@ -379,13 +594,23 @@ class Redactor:
 
     # ------------------------------------------------------------------ api
 
-    def redact(self, text: str, origin: str = "") -> RedactionResult:
-        """Return ``text`` with secrets replaced by deterministic markers."""
+    def redact(
+        self, text: str, origin: str = "", known_safe: Sequence[str] = ()
+    ) -> RedactionResult:
+        """Return ``text`` with secrets replaced by deterministic markers.
+
+        ``known_safe`` names tokens the *caller* composed into ``text`` from
+        information already published elsewhere in the report — a finding's file
+        path or symbol (feature 010, FR-009). Heuristic (entropy) candidates inside
+        such a token are left alone and recorded as ``exempt-location``; rule-pack
+        format matches are never protected (FR-010).
+        """
         if not text:
             return RedactionResult(text="")
 
         self._exemptions = []
         spans: list[tuple[int, int, str, bool]] = []  # start, end, label, blocked
+        protected = _protected_spans(text, known_safe)
 
         for rule in self.rules:
             for match in rule.pattern.finditer(text):
@@ -395,6 +620,14 @@ class Redactor:
                 value = text[start:end]
                 if _is_placeholder(value):
                     continue
+                # Feature 010 (FR-001, FR-005a, FR-008): only the variable-assignment
+                # rule consults the reference classifier. Format rules never do — a
+                # known credential format is reported wherever it appears.
+                if rule.label == "assigned-secret":
+                    reference = classify_runtime_reference(value)
+                    if reference is not None:
+                        self._exempt_reference(origin, text, start, rule.label, value, reference)
+                        continue
                 spans.append((start, end, rule.label, False))
 
         for match in _ENTROPY_CANDIDATE.finditer(text):
@@ -409,6 +642,31 @@ class Redactor:
             line_start = text.rfind("\n", 0, start) + 1
             line_end = text.find("\n", end)
             line = text[line_start : line_end if line_end != -1 else len(text)]
+            # Feature 010 (research R4): a long reference NAME can clear the entropy
+            # threshold on its own. If the value enclosing the candidate is entirely
+            # runtime indirection, the candidate is a name, not key material.
+            enclosing = _enclosing_value(line, start - line_start, end - line_start)
+            reference = classify_runtime_reference(enclosing)
+            if reference is not None:
+                self._exempt_reference(origin, text, start, "entropy-candidate", value, reference)
+                continue
+            token = _protecting_token(protected, start, end)
+            if token is not None:
+                self._exemptions.append(
+                    ExemptionDecision(
+                        origin=origin,
+                        line=line_no_for(text, start),
+                        rule="entropy-candidate",
+                        value=value,
+                        classification="location-token",
+                        reason=(
+                            f"inside scanner-composed location token {token!r}, already "
+                            "published unredacted in the finding's structured location"
+                        ),
+                        decision="exempt-location",
+                    )
+                )
+                continue
             if _has_credential_context(text, start, end, line, line_start):
                 spans.append((start, end, "high-entropy-secret", False))
                 continue
@@ -495,6 +753,27 @@ class Redactor:
         return not self.redact(text).clean
 
     # ------------------------------------------------------------- internals
+
+    def _exempt_reference(
+        self,
+        origin: str,
+        text: str,
+        position: int,
+        rule: str,
+        value: str,
+        reference: RuntimeReference,
+    ) -> None:
+        self._exemptions.append(
+            ExemptionDecision(
+                origin=origin,
+                line=line_no_for(text, position),
+                rule=rule,
+                value=value,
+                classification=_reference_classification(reference),
+                reason=_reference_reason(reference),
+                decision="exempt-reference",
+            )
+        )
 
     @staticmethod
     def _overlaps(spans: list[tuple[int, int, str, bool]], start: int, end: int) -> bool:

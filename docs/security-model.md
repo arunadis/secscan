@@ -20,6 +20,24 @@ enforced by tests, not intent (the enforcement table lives in the
   values appear nowhere: not in context packets, not in artifacts, not in logs.
 - Credentials are supplied by environment-variable **name** only. A key value
   anywhere under `llm.endpoint` is rejected by config validation outright.
+- **Runtime references are wiring, not credentials.** A credential-named key
+  assigned from an indirection expression — bare or braced shell (`"$VAR"`,
+  `"${VAR}"`), Windows batch (`"%VAR%"`), template placeholders (`"{{ var }}"`),
+  CI expressions (`"${{ secrets.X }}"`), or command substitution (`"$(…)"`) — is
+  left visible in context and recorded as an `exempt-reference` decision, never
+  reported as CWE-798. The rule is a single structural test: *every letter and digit
+  must lie inside a well-formed reference*. Punctuation between references
+  (`"$USER:$PASS"`) is fine; any literal character outside one (`"$PREFIX-hunter2"`,
+  `"pa$$w0rd"`, an unbalanced `"${NAME"`) makes the whole value a literal that is
+  redacted and reported. Shell expansion operands of `:-`, `:=`, `:+` can become
+  the value and are evaluated as literals — so `"${DB_PASSWORD:-hunter2hunter2}"`
+  *is* a finding (this closed a gap where the old blanket `${…}` placeholder
+  exempted it) — while `:?` operands are diagnostics and are ignored.
+- **Report prose never redacts its own locations.** Tokens the report composed
+  from the finding's structured location (repo, file path, symbol) are protected
+  from the entropy heuristic in reproduction text, so the reader is never told to
+  inspect `[REDACTED:high-entropy-secret].sh`. Rule-pack format matches are never
+  protected: a path that literally contains a key pattern is still redacted.
 
 ## Offline by default, read-only always
 

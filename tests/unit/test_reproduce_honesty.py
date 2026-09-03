@@ -153,3 +153,51 @@ def test_extractor_does_not_annotate_a_fully_controlled_url() -> None:
     assert facts is not None
     annotated = {s.name: set(s.annotations) for s in facts.symbols}
     assert "fixed_prefix_sink" not in annotated.get("fetchAny", set())
+
+
+# ---------------------------------- feature 010: location tokens stay readable
+
+
+def _secret_finding(**location) -> dict:
+    loc = {
+        "repo": "skh",
+        "file": "skillhunt-portal-backend/migration/p0/verify-account.sh",
+        "symbol": "AWS_SECRET_ACCESS_KEY",
+        "line_start": 47,
+        "line_end": 53,
+    }
+    loc.update(location)
+    return {"id": "SEC-0080", "cwe": "CWE-798", "location": loc, "evidence": [],
+            "verification": {"status": "verified"}}
+
+
+def test_reproduction_trigger_keeps_the_file_path_verbatim() -> None:
+    """FR-009/FR-011: the report must not tell the reader to inspect [REDACTED].sh."""
+    block = build_reproduction(_secret_finding(), flow=None)
+    assert "skillhunt-portal-backend/migration/p0/verify-account.sh#AWS_SECRET_ACCESS_KEY" in (
+        block["trigger"]
+    )
+    assert "[REDACTED" not in block["trigger"] and "[BLOCKED" not in block["trigger"]
+
+
+def test_reproduction_keeps_a_high_entropy_symbol_from_the_code_model() -> None:
+    symbol = "Zk3Qp9Xr7Lm2Vn8Bt4Wy6Cd0Hj5Gs1F"
+    block = build_reproduction(_secret_finding(symbol=symbol), flow=None)
+    assert symbol in block["trigger"]
+
+
+def test_reproduction_still_redacts_a_credential_value(monkeypatch) -> None:
+    """FR-010: protecting locations must not protect values."""
+    from pipeline import reproduce
+
+    value = "Xh8Kq2Lm9Rt4Wv7Zy1Bc3Df6Gj0Np5Sa"
+    real = reproduce._build_parts
+
+    def leaky(*args, **kwargs):
+        pre, trig, exp, obs = real(*args, **kwargs)
+        return pre, f"{trig} secret={value}", exp, obs
+
+    monkeypatch.setattr(reproduce, "_build_parts", leaky)
+    block = build_reproduction(_secret_finding(), flow=None)
+    assert value not in block["trigger"]
+    assert "verify-account.sh" in block["trigger"]

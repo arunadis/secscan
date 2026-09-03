@@ -276,6 +276,13 @@ def test_defect_class_credential_precision() -> None:
     whether it was a true or false positive. The external target is not scanned
     here; what is asserted is (a) the audit's integrity and (b) the mechanism on
     the fixture corpora — the same detector that produced those findings.
+
+    Feature 010 mutation check (2026-09-02, T026): re-adding the blanket
+    ``\\$\\{[^}]*\\}`` placeholder to ``_PLACEHOLDER`` turns this test red (the
+    ``${ENV_SECRET}`` corpus entry loses its exempt-reference decision, and the
+    ``${DB_PASSWORD:-hunter2hunter2}`` must-find is silently exempted again);
+    disabling the assigned-secret exemption branch turns it red on the SEC-0080
+    line. The guard bites in both directions.
     """
     audit_path = Path(__file__).parent / "cases" / "audited_credential_baseline.json"
     audit = json.loads(audit_path.read_text())
@@ -295,6 +302,17 @@ def test_defect_class_credential_precision() -> None:
     assert false_positives, "audit found no false positives — SC-003 is vacuous"
     assert true_positives, "audit found no true positives — recall is unguarded"
 
+    # Feature 010 follow-up audit (SC-003): the runtime-reference findings from a
+    # later scan of the same workspace. Labels collide with the 2026-08-31 scan's,
+    # so they live in their own block rather than in `entries`.
+    (follow_up,) = audit["follow_up_scans"]
+    assert follow_up["feature"] == "010-runtime-credential-refs"
+    assert [e["source_label"] for e in follow_up["entries"]] == ["SEC-0080", "SEC-0082", "SEC-0084"]
+    for entry in follow_up["entries"]:
+        assert entry["verdict"] == "false-positive"
+        assert "runtime reference" in entry["rationale"]
+        assert entry["file"].endswith(".sh")
+
     # Mechanism, FP side: the fixture corpus reproducing the audited FP classes
     # produces no hits, hence no findings (SC-001).
     from pipeline.redact import Redactor
@@ -306,6 +324,16 @@ def test_defect_class_credential_precision() -> None:
         result = redactor.redact(line, origin="src/app.ts")
         assert not findings_from_hits(result.hits, "repo"), f"FP finding: {token} ({why})"
 
+    # Feature 010 FP side: runtime references (SEC-0080 class) are never findings
+    # and every exemption is recorded (FR-012, SC-001, SC-004).
+    from tests.fixtures.runtime_reference_corpus import REFERENCES
+
+    for origin, line, why in REFERENCES:
+        result = redactor.redact(line, origin=origin)
+        assert result.hits == [], f"hit on runtime reference: {line} ({why})"
+        assert not findings_from_hits(result.hits, "repo"), f"FP finding ({why})"
+        assert any(e.decision == "exempt-reference" for e in result.exempted), why
+
     # Mechanism, TP side: every seeded credential is still detected (SC-002),
     # and heuristic-labelled findings never publish as verified (FR-008).
     from tests.fixtures.credential_corpus import CREDENTIALS
@@ -313,6 +341,23 @@ def test_defect_class_credential_precision() -> None:
     for origin, line, why in CREDENTIALS:
         result = redactor.redact(line, origin=origin)
         assert result.redacted >= 1, f"missed credential ({why})"
+
+    # Feature 010 recall GAIN (FR-007, FR-013): the literal default that the old
+    # blanket `${…}` placeholder silently exempted is now a finding.
+    gained = redactor.redact('password: "${DB_PASSWORD:-hunter2hunter2}"', origin="compose.yml")
+    assert gained.redacted == 1 and findings_from_hits(gained.hits, "repo")
+
+    # Feature 010 report integrity (FR-009, SC-005): a long slash-joined path on a
+    # line naming a credential symbol survives the reproduction backstop.
+    from pipeline.reproduce import build_reproduction
+
+    path = "skillhunt-portal-backend/migration/p0/verify-account.sh"
+    block = build_reproduction(
+        {"cwe": "CWE-798", "verification": {"status": "verified"},
+         "location": {"repo": "skh", "file": path, "symbol": "AWS_SECRET_ACCESS_KEY"}},
+        flow=None,
+    )
+    assert path in block["trigger"] and "[REDACTED" not in block["trigger"]
     heuristic = findings_from_hits(
         [
             h

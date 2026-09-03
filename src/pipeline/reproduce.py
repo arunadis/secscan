@@ -171,8 +171,14 @@ def build_reproduction(
     elif flow is not None and flow.path:
         block["traced_trail"] = list(flow.path)
 
-    # Backstop: reproduction blocks must never carry a real secret.
+    # Backstop: reproduction blocks must never carry a real secret. Location
+    # tokens the builder itself composed in (file, symbol) are protected from the
+    # heuristic pass only — they are already published in `location` — so the
+    # reader is never told to inspect "[REDACTED:high-entropy-secret].sh".
     redactor = redactor or Redactor()
+    known_safe = tuple(
+        t for t in (location.get("repo"), location.get("file"), location.get("symbol"), where) if t
+    )
     for key in (
         "preconditions",
         "trigger",
@@ -182,7 +188,9 @@ def build_reproduction(
         "trigger_omitted_reason",
     ):
         if block.get(key):
-            block[key] = redactor.redact(block[key], origin=f"reproduction.{key}").text
+            block[key] = redactor.redact(
+                block[key], origin=f"reproduction.{key}", known_safe=known_safe
+            ).text
     return block
 
 

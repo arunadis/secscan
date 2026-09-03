@@ -255,3 +255,42 @@ def test_every_internal_reference_resolves_in_both_human_formats(scanned: Path) 
     for pointer in re.findall(r"see the ([\w, ]+) sections?\.", markdown):
         for band in re.findall(r"[A-Z]\w+", pointer):
             assert band in sections, f"recommendation points at missing section {band}"
+
+
+_REPRO_FIELDS = (
+    "preconditions",
+    "trigger",
+    "expected_behavior",
+    "observed_behavior",
+    "outcome_to_check",
+    "trigger_omitted_reason",
+)
+
+
+def test_reproduction_text_never_consumes_a_location_token(scanned: Path) -> None:
+    """Feature 010 FR-009/FR-011/SC-005: the report never says 'Inspect [REDACTED].sh'."""
+    for finding in _all_findings(_report_payload(scanned)):
+        repro = finding.get("reproduction") or {}
+        if finding["cwe"] == "CWE-798":
+            where = repro.get("trigger") or repro.get("trigger_omitted_reason") or ""
+            assert finding["location"]["file"] in where, (finding["id"], where)
+        for field in _REPRO_FIELDS:
+            text = repro.get(field) or ""
+            for marker in ("[REDACTED", "[BLOCKED"):
+                for index in _indices(text, marker):
+                    end = text.find("]", index)
+                    after = text[end + 1 : end + 2]
+                    before = text[index - 1 : index]
+                    assert after not in ("/", "#", ".") and before not in ("/", "#"), (
+                        finding["id"],
+                        field,
+                        text,
+                    )
+
+
+def _indices(text: str, needle: str) -> list[int]:
+    out, position = [], text.find(needle)
+    while position >= 0:
+        out.append(position)
+        position = text.find(needle, position + 1)
+    return out
