@@ -13,10 +13,12 @@ aggregated from structured evidence rather than by re-reading the source.
 > sitting on top of a deterministic repository model.
 
 **Status: in development.** The core pipeline and installer work end to end, the
-accuracy-hardening work is complete through its polish phase, and external-scanner
-tooling (provision, run, cross-check) is built per spec 008 — see
-[Roadmap](#roadmap). Multi-repo correlation and incremental rescan remain
-specified but not yet built.
+accuracy-hardening work is complete through its polish phase, external-scanner
+tooling (provision, run, cross-check) is built per spec 008, and endpoint
+scheduling (provider batch, off-peak windows) is built per feature 012 — see
+[Roadmap](#roadmap). Multi-repo workspaces scan and report today; deep
+cross-repo reasoning and selective incremental rescan remain specified but not
+yet built.
 
 ---
 
@@ -476,13 +478,29 @@ Accuracy hardening (feature 002 — built and tested):
   always declared as a coverage limitation — never read as clean.
 
 Specified, not yet built:
-- ⬜ Multi-repo workspaces & cross-repo correlation (Phase 6) — schemas and the
-  workspace model exist; discovery and system-level LLM review do not
-- ⬜ Incremental rescan (Phase 7) — change detection exists; invalidation cascade does not
-- ⬜ Batch/off-peak execution, determinism & performance hardening, docs (Phase 8)
+
+- ⬜ Deep cross-repo reasoning (Phase 6 / US4) — the workspace model, member
+  discovery (declared manifest or auto-inferred from directory structure),
+  multi-member code graph, segments, and a workspace-wide report with per-repo
+  derived views all exist and are tested. What does not: inference and typing of
+  *undeclared* integration points, the richer correlation relationships
+  (`related`/`dependent`, conflict reconciliation), and a system-tier LLM
+  cross-boundary review
+- ⬜ Incremental rescan (Phase 7 / US5) — per-file change detection (content
+  hashes key every stage, so changed files re-run only the stages downstream of
+  them), single-segment re-runs (`--segment`), and profile-depth re-analysis
+  exist. What does not: selecting a *subset* of segments for re-analysis from
+  the changed files, and invalidating dependent segments in other repos across
+  a declared integration
+- ⬜ Performance/scale validation (Phase 8) — batch/off-peak execution
+  (feature 012), determinism regression tests, artifact redaction sweep, and
+  the `docs/` set are all delivered; the large-repository performance benchmark
+  is the remaining item
 
 The system-level review currently produces a deterministic narrative from
-structured evidence; LLM cross-boundary reasoning lands with Phase 6.
+structured evidence; in agent-mediated mode the host agent enriches it via the
+final-review prompt. A model-driven cross-boundary review at the endpoint
+`system` tier lands with Phase 6.
 
 ## Specification
 
