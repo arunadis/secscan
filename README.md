@@ -14,8 +14,11 @@ aggregated from structured evidence rather than by re-reading the source.
 
 **Status: in development.** The core pipeline and installer work end to end, the
 accuracy-hardening work is complete through its polish phase, external-scanner
-tooling (provision, run, cross-check) is built per spec 008, and endpoint
-scheduling (provider batch, off-peak windows) is built per feature 012 — see
+tooling (provision, run, cross-check) is built per spec 008, endpoint
+scheduling (provider batch, off-peak windows) is built per feature 012, the
+post-correlation finding-triage round is built per feature 013, and report
+accuracy hardening (dependency usage evidence, template-control credit,
+currency merge, dangling-reference quarantine) is built per feature 014 — see
 [Roadmap](#roadmap). Multi-repo workspaces scan and report today; deep
 cross-repo reasoning and selective incremental rescan remain specified but not
 yet built.
@@ -329,7 +332,8 @@ One command, **`secscan`**, covers both setup and scanning:
 | `secscan data [--refresh-eol]` | Knowledge-base versions and dataset staleness |
 | `secscan version` | Tool and schema versions |
 
-Exit codes: `0` ok · `1` error · `2` not ready · `3` agent handoff pending · `130` interrupted.
+Exit codes: `0` ok · `1` error · `2` not ready · `3` agent handoff pending ·
+`4` report published with quarantined narrative section(s) · `130` interrupted.
 
 A running scan prints each stage, segment (`i/N`), external tool and coverage note
 to stderr as it happens, with a heartbeat during long steps; `-q` silences it, `-v`
@@ -384,6 +388,8 @@ These are enforced by tests, not just intent:
 ├── segments/<id>.json          security-boundary segments
 ├── context-packets/<id>-l<level>.json   post-redaction, budgeted
 ├── handoff/{requests,responses}/        agent reasoning exchange
+├── analysis/answers/             cached endpoint/batch answers (reused when byte-identical)
+├── triage/declarations.json      operator answers to triage flag questions
 ├── findings/{local,correlated}
 ├── system-review.md
 ├── reports/<scan-id>.{md,json,html}   one data set, three renderings
@@ -454,17 +460,11 @@ Accuracy hardening (feature 002 — built and tested):
   `supply-chain-detection`) are release-blocking. v1 integration recognition
   covers SDK clients, raw HTTP model endpoints, and local endpoints; indirect
   invocation (agent frameworks, queues) is declared as undetermined posture
-- ✅ Finding triage round (feature 013): after correlation, the reasoning layer
-  re-examines each finalized finding — confirm / downgrade / refute-with-citations /
-  flag-with-a-question. Refutations and downgrades apply only when the pipeline
-  mechanically re-verifies every citation (file, lines, exact pattern) against the
-  repo; failed proofs degrade to flags, never suppressions. Verified refutations
-  land in the auditable suppression list; flags render in an Awaiting Verification
-  report section whose questions operators answer in `.secscan/triage/declarations.json`
-  (user-declared provenance, reversible, lapses safely). Credential findings are
-  never refutable — the value never reaches reasoning. Same round in every
-  execution mode (agent handoff, endpoint, provider batch); `quick` profiles skip
-  it, `triage.enabled` overrides
+
+Tooling, execution, and reporting (built and tested):
+
+- ✅ Navigable HTML report with redacted code excerpts per finding (feature 005)
+  — one data set rendered as Markdown, JSON, and HTML
 - ✅ External scanner tooling (spec 008): `init` detects project ecosystems and
   maps applicable tools from the shipped registry (`semgrep`, `gitleaks`,
   `osv-scanner`, `trivy`, `npm audit`, `pip-audit`, `govulncheck`, OWASP
@@ -476,6 +476,43 @@ Accuracy hardening (feature 002 — built and tested):
   provenance, and a cross-check suppresses only deterministically disproven
   findings, with every suppression auditable in the report. Tool absence is
   always declared as a coverage limitation — never read as clean.
+- ✅ NVD API key handling (spec 009): init detects `NVD_API_KEY` by variable
+  name only (the value is never prompted for, stored, or printed); keyless runs
+  degrade loudly as `awaiting-key` / `degraded-no-key` / `skipped-no-key`, and
+  blanket consent never installs OWASP Dependency-Check keyless
+- ✅ Runtime credential references (feature 010): `"$VAR"`, `"${VAR}"`,
+  `"%VAR%"`, template and CI expressions are classified structurally as runtime
+  wiring and never reported as hard-coded credentials
+- ✅ Scan progress output (feature 011): stages, segments (`i/N`), external tools
+  and coverage notes stream to stderr with a heartbeat; `-q`/`-v` levels; the
+  full trace lives in `.secscan/scan.log`; the three stdout summary lines are a
+  frozen interface
+- ✅ Endpoint scheduling (feature 012): provider batch API by default (providers'
+  published 50% batch discount, no per-minute rate-limit wall on large repos),
+  off-peak windows, resumable waits (Ctrl-C safe, the batch reference is
+  persisted), interactive fallback with retries on 429/5xx, an answer cache
+  reused only for byte-identical requests, and per-level model tiers
+  (`local` / `segment` / `system`)
+- ✅ Finding triage round (feature 013): after correlation, the reasoning layer
+  re-examines each finalized finding — confirm / downgrade / refute-with-citations /
+  flag-with-a-question. Refutations and downgrades apply only when the pipeline
+  mechanically re-verifies every citation (file, lines, exact pattern) against the
+  repo; failed proofs degrade to flags, never suppressions. Verified refutations
+  land in the auditable suppression list; flags render in an Awaiting Verification
+  report section whose questions operators answer in `.secscan/triage/declarations.json`
+  (user-declared provenance, reversible, lapses safely). Credential findings are
+  never refutable — the value never reaches reasoning. Same round in every
+  execution mode (agent handoff, endpoint, provider batch); `quick` profiles skip
+  it, `triage.enabled` overrides
+- ✅ Report accuracy hardening (feature 014): dependency findings carry a
+  three-state **usage** block (found / none-found / undetermined) so an advisory
+  never narrates exploitation for a package nothing imports; misconfiguration
+  findings carry a three-state **integration** state so stale rules-config reads
+  as removal work; template sinks get deterministic framework-escaping credit
+  (a bypass call keeps the finding standing, an unassessed control routes to the
+  triage round); currency findings merge per `(member, product, cycle)` instead
+  of doubling up; and a narrative section that references a nonexistent finding
+  is quarantined at publication — declared in the report, exit code 4
 
 Specified, not yet built:
 
@@ -493,9 +530,10 @@ Specified, not yet built:
   the changed files, and invalidating dependent segments in other repos across
   a declared integration
 - ⬜ Performance/scale validation (Phase 8) — batch/off-peak execution
-  (feature 012), determinism regression tests, artifact redaction sweep, and
-  the `docs/` set are all delivered; the large-repository performance benchmark
-  is the remaining item
+  (feature 012), determinism regression tests, artifact redaction sweep, the
+  `docs/` set, and a scale scan over a repository 10x a single context window
+  (`pytest -q -m slow`) are all delivered; the timed large-repository
+  performance benchmark is the remaining item
 
 The system-level review currently produces a deterministic narrative from
 structured evidence; in agent-mediated mode the host agent enriches it via the
@@ -517,5 +555,12 @@ The full specification, plan, contracts, and task list live in
 | `contracts/` | CLI, config, finding, and artifact schemas |
 | `quickstart.md` | Executable validation scenarios mapped to tests |
 | `tasks.md` | Dependency-ordered task list with progress |
+
+Follow-on features each have their own spec directory under [`specs/`](specs/) —
+002 accuracy hardening, 003–004 secret-precision/missed-detection work, 005 HTML
+report excerpts, 006 verification pass, 007 modern-exploit detection, 008
+external scanner integration, 009 NVD API key setup, 010 runtime credential
+references, 011 scan progress output, 012 provider batch API, 013 finding
+triage, 014 report accuracy hardening.
 
 The original design brief is in [`requirements/`](requirements/).

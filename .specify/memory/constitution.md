@@ -1,6 +1,27 @@
 <!--
 SYNC IMPACT REPORT
 ==================
+Version change: 1.1.0 → 1.2.0 (2026-09-04)
+
+MINOR: materially expanded guidance under Development Workflow & Quality Gates.
+The "Honest documentation" gate previously required only that README status
+claims match the repository; it now normatively enumerates the README surfaces
+that MUST be reconciled with every implementation change (Status header,
+Roadmap, feature lists, command/exit-code references, artifact layout) and
+requires that "specified, not yet built" claims be re-verified against the code
+whenever a change could have closed them. Trigger: a 2026-09-04 review found the
+README Roadmap describing shipped features (specs 005, 008–014) as missing and
+omitting exit code 4 — staleness discovered by manual inspection, not by a gate.
+
+Modified principles: none (no Core Principle touched; the expanded rule is a
+quality gate, not a principle).
+Added sections: none.
+Removed sections: none.
+Placeholders resolved: none.
+Deferred TODOs: none.
+
+--- 1.0.1 → 1.1.0 ---
+
 Version change: 1.0.1 → 1.1.0 (2026-09-02)
 
 MINOR: materially expanded guidance under Development Workflow & Quality Gates.
@@ -208,7 +229,14 @@ in configuration.
 - **Accuracy regressions are release-blocking.** The accuracy benchmark asserts per defect
   class; a regression in any single class fails the build even if other classes improve.
 - **Honest documentation.** Status claims in `README.md` MUST match the repository. Planned
-  work is labelled as planned.
+  work is labelled as planned. A change that alters what is shipped MUST reconcile every
+  README surface that describes it in the same change set: the Status header, the Roadmap
+  feature lists, command and exit-code references, and the artifact layout. A feature is
+  incomplete while the README describes shipped capability as planned or unbuilt, or omits
+  a shipped feature. Claims of "specified, not yet built" MUST be re-verified against the
+  code on every change that could have closed them: later features routinely deliver earlier
+  roadmap phases, so a stale "not built" claim is silent until checked, and MUST be treated
+  as a blocking documentation defect on par with an overstated one.
 - **Documentation currency.** Every behavioral, contract, or structural change MUST update
   the affected documentation in the same change set — `README.md`, the relevant pages in
   `docs/`, `CONTRIBUTING.md`, `AGENTS.md` where agent guidance is affected, and the spec
@@ -256,4 +284,4 @@ The gaps above were found by external review rather than by a gate. That is the 
 document exists, and the reason the compliance review above is mandatory rather than advisory:
 the next such defect should be caught by a plan's Constitution Check, not by a reviewer.
 
-**Version**: 1.1.0 | **Ratified**: 2026-08-30 | **Last Amended**: 2026-09-02
+**Version**: 1.2.0 | **Ratified**: 2026-08-30 | **Last Amended**: 2026-09-04
