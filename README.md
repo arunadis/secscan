@@ -19,9 +19,11 @@ scheduling (provider batch, off-peak windows) is built per feature 012, the
 post-correlation finding-triage round is built per feature 013, and report
 accuracy hardening (dependency usage evidence, template-control credit,
 currency merge, dangling-reference quarantine) is built per feature 014 — see
-[Roadmap](#roadmap). Multi-repo workspaces scan and report today; deep
-cross-repo reasoning and selective incremental rescan remain specified but not
-yet built.
+[Roadmap](#roadmap). Multi-repo workspaces scan end to end today: cross-repo
+graph edges, cross-member applicability, and a workspace-wide cross-boundary
+review are built and tested; the still-open cross-repo items are
+undeclared-integration inference, the richer correlation relationships, and
+selective incremental rescan (see [Roadmap](#roadmap)).
 
 ---
 
@@ -514,15 +516,27 @@ Tooling, execution, and reporting (built and tested):
   of doubling up; and a narrative section that references a nonexistent finding
   is quarantined at publication — declared in the report, exit code 4
 
+Multi-repo workspaces (Phase 6 / US4 — built and tested):
+
+- ✅ Workspace model with member discovery (declared manifest or auto-inferred
+  from directory structure) and declared integration points normalized and
+  typed (sync-api, async-messaging, shared-datastore, identity-propagation)
+- ✅ Multi-member code graph with cross-repo call edges, segments spanning
+  repos, and compound findings whose evidence legs cross members
+- ✅ Cross-member applicability and host ownership: a weakness class impossible
+  for a lone browser member survives when a reachable sibling issues
+  server-side requests; sibling hosts classify as internal
+- ✅ Unified workspace report with per-repo derived views and a cross-boundary
+  review: a deterministic baseline narrative (cross-boundary observations are
+  never silenced — it says so when nothing crossed), enriched by the host agent
+  via the final-review prompt in agent-mediated mode
+
 Specified, not yet built:
 
-- ⬜ Deep cross-repo reasoning (Phase 6 / US4) — the workspace model, member
-  discovery (declared manifest or auto-inferred from directory structure),
-  multi-member code graph, segments, and a workspace-wide report with per-repo
-  derived views all exist and are tested. What does not: inference and typing of
+- ⬜ Deep cross-repo reasoning (US4 remainder) — inference and typing of
   *undeclared* integration points, the richer correlation relationships
-  (`related`/`dependent`, conflict reconciliation), and a system-tier LLM
-  cross-boundary review
+  (`related`/`dependent`, conflict reconciliation), and a model-driven
+  system-tier cross-boundary review at the endpoint
 - ⬜ Incremental rescan (Phase 7 / US5) — per-file change detection (content
   hashes key every stage, so changed files re-run only the stages downstream of
   them), single-segment re-runs (`--segment`), and profile-depth re-analysis
@@ -536,9 +550,10 @@ Specified, not yet built:
   performance benchmark is the remaining item
 
 The system-level review currently produces a deterministic narrative from
-structured evidence; in agent-mediated mode the host agent enriches it via the
-final-review prompt. A model-driven cross-boundary review at the endpoint
-`system` tier lands with Phase 6.
+structured evidence — including cross-boundary observations for findings whose
+evidence spans members; in agent-mediated mode the host agent enriches it via
+the final-review prompt. A model-driven cross-boundary review at the endpoint
+`system` tier is the remaining Phase 6 item.
 
 ## Specification
 
@@ -562,5 +577,3 @@ report excerpts, 006 verification pass, 007 modern-exploit detection, 008
 external scanner integration, 009 NVD API key setup, 010 runtime credential
 references, 011 scan progress output, 012 provider batch API, 013 finding
 triage, 014 report accuracy hardening.
-
-The original design brief is in [`requirements/`](requirements/).

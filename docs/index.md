@@ -39,9 +39,8 @@ Deeper source material also lives in the repo:
 
 - The governance document: [`.specify/memory/constitution.md`](../.specify/memory/constitution.md) —
   the six non-negotiable principles every feature is checked against.
-- The feature history: [`specs/`](../specs/) — spec-first records (001–009) with
+- The feature history: [`specs/`](../specs/) — spec-first records (001–014) with
   requirements, plans, contracts, and task lists.
-- The original design brief: [`requirements/`](../requirements/).
 - Agent-facing guidance: [`AGENTS.md`](../AGENTS.md).
 
 ## Where to start
