@@ -49,7 +49,7 @@ def test_load_valid_config(tmp_path: Path) -> None:
     scan_dir = write_config(tmp_path, default_config_yaml())
     config = load(scan_dir, environ={})
     assert config.llm_mode == "auto"
-    assert config.execution_mode == "interactive"
+    assert config.execution_mode == "auto"  # batch when an endpoint is configured (012)
     assert config.budgets["max_context_tokens"] == 12000
 
 
@@ -298,7 +298,9 @@ def test_endpoint_config_takes_precedence() -> None:
         },
     )
     resolution = mode_mod.resolve(config, environ={"TEST_KEY": "secret"})
-    assert resolution.mode is ExecutionMode.ENDPOINT_INTERACTIVE
+    # An endpoint with no explicit policy is batch by default (feature 012, FR-023).
+    assert resolution.mode is ExecutionMode.ENDPOINT_BATCH
+    assert resolution.policy_source == "default"
     assert resolution.tier_for("local") == "haiku"
     assert resolution.tier_for("system") == "opus"
     assert not resolution.unavailable_features

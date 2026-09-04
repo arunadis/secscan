@@ -115,9 +115,12 @@ def init_command(
 )
 @click.option(
     "--policy",
-    type=click.Choice(("interactive", "batch-offpeak")),
+    type=click.Choice(("auto", "interactive", "batch", "batch-offpeak")),
     default=None,
-    help="Override the execution policy for this scan.",
+    help=(
+        "Execution policy for this scan (default: config value; "
+        "auto = batch when an endpoint is configured)."
+    ),
 )
 @click.option(
     "--tool-timeout",
@@ -125,6 +128,19 @@ def init_command(
     default=None,
     metavar="SECONDS",
     help="Per-tool wall-clock ceiling for external tools (overrides tooling.timeout_s).",
+)
+@click.option(
+    "--output",
+    type=click.Choice(("quiet", "default", "verbose")),
+    default=None,
+    help="Progress output level on stderr (overrides output.level; default: default).",
+)
+@click.option(
+    "-q", "quiet", is_flag=True, help="Progress off: final summary only (--output quiet)."
+)
+@click.option(
+    "-v", "verbose", is_flag=True,
+    help="Per-segment budget/escalation and per-tool detail (--output verbose).",
 )
 @click.option(
     "--workdir",
@@ -139,10 +155,21 @@ def run_command(
     overrides: tuple[str, ...],
     policy: str | None,
     tool_timeout: int | None,
+    output: str | None,
+    quiet: bool,
+    verbose: bool,
     workdir: Path,
 ) -> None:
-    """Run a scan."""
+    """Run a scan. Progress is printed to stderr; the summary to stdout."""
     from pipeline import scan_cli
+
+    chosen = [name for name, flag in (("-q", quiet), ("-v", verbose), ("--output", output)) if flag]
+    if len(chosen) > 1:
+        raise click.UsageError(f"{' and '.join(chosen)} cannot be combined")
+    if quiet:
+        output = "quiet"
+    elif verbose:
+        output = "verbose"
 
     args = argparse.Namespace(
         workdir=workdir,
@@ -152,6 +179,7 @@ def run_command(
         tool_timeout=tool_timeout,
         full=full,
         segment=segment,
+        output=output,
     )
     sys.exit(scan_cli.cmd_run(args))
 

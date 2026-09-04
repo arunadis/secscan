@@ -50,10 +50,10 @@
       "version_probe": ["gitleaks", "version"],
       "provision_channels": [
         { "manager": "brew", "argv": ["brew", "install", "gitleaks"] },
-        { "manager": "go", "argv": ["go", "install", "github.com/gitleaks/gitleaks/v8@latest"] }
+        { "manager": "go", "argv": ["go", "install", "github.com/zricethezav/gitleaks/v8@latest"] }
       ],
       "invoke": {
-        "argv": ["gitleaks", "detect", "--source", "{project}", "--no-git", "--report-format", "json", "--report-path", "{out_file}"],
+        "argv": ["gitleaks", "detect", "--source", "{project}", "--no-git", "--config", "{payload_data}/gitleaks.toml", "--redact", "--no-banner", "--report-format", "json", "--report-path", "{out_file}"],
         "requires_lockfile": null,
         "requires_network": false,
         "report_out": "file"

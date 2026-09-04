@@ -42,7 +42,16 @@
       "properties": {
         "batch_invocations": { "type": "integer", "minimum": 0 },
         "interactive_invocations": { "type": "integer", "minimum": 0 },
-        "fallbacks": { "type": "integer", "minimum": 0 }
+        "fallbacks": { "type": "integer", "minimum": 0 },
+        "batch_input_tokens": { "type": "integer", "minimum": 0 },
+        "batch_output_tokens": { "type": "integer", "minimum": 0 },
+        "estimated_saving_percent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 50,
+          "description": "50% x batch token share; assumes the provider's published batch discount"
+        },
+        "assumption": { "type": "string" }
       }
     },
     "fallback_log": {

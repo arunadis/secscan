@@ -5,7 +5,8 @@ executing any tool beyond a bounded version probe:
 
 1. does the **project itself** provide the tool (project-local dependencies,
    declared build plugins, wrapper toolchains)? — read-only manifest reads only
-2. is it installed **system-wide**? — ``shutil.which``
+2. is it installed **system-wide**? — PATH, then the Go bin directory
+   (``locate.resolve_executable``)
 3. what version is it? — a bounded probe; a failed probe yields ``None``,
    which callers must render as undetermined, never assumed.
 
@@ -25,6 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from pipeline.tooling.locate import resolve_executable, resolved_argv
 from pipeline.tooling.registry import ToolEntry
 
 SOURCE_PROJECT = "project-provided"
@@ -190,14 +192,18 @@ def discover_tool(root: Path, entry: ToolEntry) -> Availability:
                 network=entry.network,
                 entry=entry,
             )
-    if entry.system_executable and shutil.which(entry.system_executable):
+    resolved = resolve_executable(entry.system_executable) if entry.system_executable else None
+    if resolved:
+        # PATH hit: keep the bare name (stable invocation); a Go-bin-only hit
+        # records the absolute path so the scan can execute it without PATH
+        on_path = shutil.which(entry.system_executable) is not None
         return Availability(
             tool_id=entry.id,
             display_name=entry.display_name,
             applicable=True,
             source=SOURCE_SYSTEM,
-            version=probe_version(entry.version_probe),
-            invocation=entry.system_executable,
+            version=probe_version(tuple(resolved_argv(entry.version_probe))),
+            invocation=entry.system_executable if on_path else resolved,
             network=entry.network,
             entry=entry,
         )

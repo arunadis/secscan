@@ -27,31 +27,35 @@ VALID_INTEGRATION_TYPES = (
     "identity-propagation",
 )
 VALID_LLM_MODES = ("auto", "endpoint", "agent")
-VALID_EXECUTION_MODES = ("interactive", "batch-offpeak")
+#: ``auto`` (default) means batch whenever an endpoint is configured (feature 012, FR-023).
+VALID_EXECUTION_MODES = ("auto", "interactive", "batch", "batch-offpeak")
 VALID_SCANNERS = ("semgrep", "gitleaks", "osv", "trivy")
 VALID_TOGGLES = ("auto", True, False)
 
 #: Declared config surface. Anything outside this is rejected (strict schema).
 _ALLOWED: dict[str, tuple[str, ...]] = {
     "": ("version", "workspace", "llm", "execution_policy", "budgets", "profiles",
-         "scanners", "redaction", "tooling"),
+         "scanners", "redaction", "tooling", "output", "triage"),
+    "triage": ("enabled", "min_severity_band", "include_unverified"),
     "workspace": ("members", "integrations"),
-    "llm": ("mode", "endpoint"),
+    "llm": ("mode", "endpoint", "retry"),
     "llm.endpoint": ("provider", "model_map", "api_key_env", "base_url"),
     "llm.endpoint.model_map": ("local", "segment", "system"),
+    "llm.retry": ("attempts", "max_wait_s"),
     "execution_policy": ("mode", "offpeak_window", "batch"),
-    "execution_policy.batch": ("enabled", "fallback"),
+    "execution_policy.batch": ("enabled", "fallback", "window_hours"),
     "budgets": ("max_context_tokens", "max_output_tokens", "escalation_threshold"),
     "redaction": ("extra_patterns", "entropy_threshold"),
     "tooling": ("install", "timeout_s"),
+    "output": ("level",),
 }
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "version": CONFIG_VERSION,
     "llm": {"mode": "auto"},
     "execution_policy": {
-        "mode": "interactive",
-        "batch": {"enabled": False, "fallback": "interactive"},
+        "mode": "auto",
+        "batch": {"fallback": "interactive", "window_hours": 24},
     },
     "budgets": {
         "max_context_tokens": 12000,
@@ -64,6 +68,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
 }
 
 VALID_TOOLING_INSTALL = ("never", "ask", "all")
+#: Triage round enablement (feature 013): auto follows the profile's
+#: ``analysis_depth.finding_triage``; on/off override it.
+VALID_TRIAGE_ENABLED = ("auto", "on", "off")
+VALID_SEVERITY_BANDS = ("Low", "Medium", "High", "Critical")
+#: Progress output levels for `run` (feature 011). Mirrors pipeline.progress.OutputLevel;
+#: kept as data here so config validation needs no pipeline import.
+VALID_OUTPUT_LEVELS = ("quiet", "default", "verbose")
 
 
 class ConfigError(ValueError):
@@ -108,7 +119,7 @@ class Config:
 
     @property
     def execution_mode(self) -> str:
-        return str(self._get("execution_policy", "mode", default="interactive"))
+        return str(self._get("execution_policy", "mode", default="auto"))
 
     @property
     def offpeak_window(self) -> str | None:
@@ -117,8 +128,27 @@ class Config:
 
     @property
     def batch_enabled(self) -> bool:
+        return bool(self.batch_enabled_explicit)
+
+    @property
+    def batch_enabled_explicit(self) -> bool | None:
+        """``execution_policy.batch.enabled`` as written, or ``None`` when absent (012)."""
         batch = (self.raw.get("execution_policy") or {}).get("batch") or {}
-        return bool(batch.get("enabled", False))
+        value = batch.get("enabled")
+        return None if value is None else bool(value)
+
+    @property
+    def batch_window_hours(self) -> float:
+        """Batch expiry measured from submission (feature 012, FR-009)."""
+        return float(self._get("execution_policy", "batch", "window_hours", default=24))
+
+    @property
+    def retry_attempts(self) -> int:
+        return int(self._get("llm", "retry", "attempts", default=5))
+
+    @property
+    def retry_max_wait_s(self) -> int:
+        return int(self._get("llm", "retry", "max_wait_s", default=60))
 
     @property
     def budgets(self) -> dict[str, Any]:
@@ -154,6 +184,27 @@ class Config:
     def tooling_timeout_s(self) -> int:
         """Per-tool wall-clock ceiling for external tool runs (feature 008)."""
         return int(self._get("tooling", "timeout_s", default=120))
+
+    @property
+    def output_level(self) -> str:
+        """Progress output level for `run`: quiet | default | verbose (feature 011)."""
+        return str(self._get("output", "level", default="default"))
+
+    @property
+    def triage_enabled(self) -> str:
+        """Triage round enablement: auto | on | off (feature 013)."""
+        return str(self._get("triage", "enabled", default="auto"))
+
+    @property
+    def triage_min_severity_band(self) -> str | None:
+        """Lowest band triaged; None resolves to the profile default (feature 013)."""
+        value = self._get("triage", "min_severity_band", default=None)
+        return str(value) if value is not None else None
+
+    @property
+    def triage_include_unverified(self) -> bool:
+        """Whether findings with unverified status are triage candidates (feature 013)."""
+        return bool(self._get("triage", "include_unverified", default=True))
 
     def scanners(self) -> dict[str, ScannerSetting]:
         configured = self.raw.get("scanners") or {}
@@ -200,19 +251,30 @@ version: 1
 llm:
   mode: auto                      # auto | endpoint | agent
   # endpoint:                     # omit to use the host agent's own model
-  #   provider: anthropic         # anthropic | openai-compatible
-  #   api_key_env: ANTHROPIC_API_KEY
-  #   model_map:
+  #   provider: anthropic         # MUST match the key: anthropic -> x-api-key to
+  #                               #   api.anthropic.com/v1/messages
+  #                               # openai-compatible -> Bearer to
+  #                               #   {base_url}/chat/completions (default api.openai.com/v1)
+  #   api_key_env: ANTHROPIC_API_KEY   # e.g. OPENAI_API_KEY for openai-compatible
+  #   base_url: https://your-gateway/v1  # optional; only for gateways/proxies
+  #   model_map:                  # per-level model IDs, passed to the provider verbatim
   #     local: claude-haiku-latest
   #     segment: claude-sonnet-latest
   #     system: claude-opus-latest
+  # retry:                        # transient endpoint failures (429/5xx) on live requests
+  #   attempts: 5                 # total attempts per request (1 initial + 4 retries)
+  #   max_wait_s: 60              # ceiling for one wait; Retry-After is honoured as a minimum
 
 execution_policy:
-  mode: interactive               # interactive | batch-offpeak
+  mode: auto                      # auto | interactive | batch | batch-offpeak
+                                  # auto = batch when an endpoint is configured; the scan
+                                  # submits each analysis round as one provider batch, waits
+                                  # in the foreground (Ctrl-C is resumable), and re-runs
+                                  # failed items live. Set interactive for quick scans.
   # offpeak_window: "02:00-06:00" # REQUIRED when mode is batch-offpeak
   batch:
-    enabled: false
-    fallback: interactive
+    fallback: interactive         # the only valid value
+    window_hours: 24              # batch expiry, measured from submission
 
 budgets:
   max_context_tokens: 12000
@@ -232,6 +294,13 @@ scanners:
 
 redaction:
   extra_patterns: []
+
+# triage:                             # finding-triage round (feature 013)
+#   enabled: auto                   # auto | on | off — auto follows the profile
+#                                   # (quick off; full/audit on)
+#   min_severity_band: Medium       # lowest band triaged (audit defaults to Low)
+#   include_unverified: true        # findings with verification gaps are
+#                                   # candidates too
 
 tooling:                            # external security tools (feature 008)
   install: ask                      # never | ask | all — consent default for init
@@ -255,11 +324,17 @@ def apply_env_overrides(raw: dict[str, Any], environ: dict[str, str] | None = No
     """Apply ``SECSCAN_SECTION_KEY`` overrides in place; returns applied keys."""
     env = dict(environ if environ is not None else os.environ)
     applied: list[str] = []
+    # Nested prefixes first so ``EXECUTION_POLICY_BATCH_WINDOW_HOURS`` lands on
+    # ``execution_policy.batch.window_hours`` rather than a flat key (feature 012).
     sections = {
+        "EXECUTION_POLICY_BATCH": ("execution_policy", "batch"),
+        "LLM_RETRY": ("llm", "retry"),
         "BUDGETS": ("budgets",),
         "EXECUTION_POLICY": ("execution_policy",),
         "LLM": ("llm",),
         "TOOLING": ("tooling",),
+        "OUTPUT": ("output",),
+        "TRIAGE": ("triage",),
     }
     for name, value in sorted(env.items()):
         if not name.startswith(ENV_PREFIX):
@@ -379,12 +454,24 @@ def validate_config(raw: dict[str, Any]) -> list[str]:
             "either configure an endpoint or use mode 'auto'/'agent'"
         )
 
+    retry = llm.get("retry")
+    if retry is not None:
+        if not isinstance(retry, dict):
+            problems.append("llm.retry must be a mapping")
+        else:
+            for key in ("attempts", "max_wait_s"):
+                value = retry.get(key)
+                if value is not None and (
+                    not isinstance(value, int) or isinstance(value, bool) or value < 1
+                ):
+                    problems.append(f"llm.retry.{key} must be a positive integer (found {value!r})")
+
     # ------------------------------------------------------- execution policy
     policy = raw.get("execution_policy") or {}
     if not isinstance(policy, dict):
         problems.append("execution_policy must be a mapping")
         policy = {}
-    exec_mode = policy.get("mode", "interactive")
+    exec_mode = policy.get("mode", "auto")
     if exec_mode not in VALID_EXECUTION_MODES:
         problems.append(
             f"execution_policy.mode must be one of {', '.join(VALID_EXECUTION_MODES)} "
@@ -414,6 +501,24 @@ def validate_config(raw: dict[str, Any]) -> list[str]:
                 "execution_policy.batch.enabled requires llm.endpoint; batch APIs are "
                 "unavailable in agent-mediated mode"
             )
+        enabled = batch.get("enabled")
+        if enabled is False and exec_mode in ("batch", "batch-offpeak"):
+            problems.append(
+                f"execution_policy.mode is '{exec_mode}' but execution_policy.batch.enabled "
+                "is false - conflicting settings"
+            )
+        if enabled is True and exec_mode == "interactive":
+            problems.append(
+                "execution_policy.mode is 'interactive' but execution_policy.batch.enabled "
+                "is true - conflicting settings"
+            )
+        hours = batch.get("window_hours")
+        if hours is not None and (
+            not isinstance(hours, (int, float)) or isinstance(hours, bool) or hours <= 0
+        ):
+            problems.append(
+                f"execution_policy.batch.window_hours must be a positive number (found {hours!r})"
+            )
 
     # -------------------------------------------------------------- budgets
     budgets = raw.get("budgets") or {}
@@ -433,6 +538,30 @@ def validate_config(raw: dict[str, Any]) -> list[str]:
             problems.append(
                 f"budgets.escalation_threshold must be in (0, 1] (found {threshold})"
             )
+
+    # --------------------------------------------------------------- triage
+    triage = raw.get("triage")
+    if triage is not None:
+        if not isinstance(triage, dict):
+            problems.append("triage must be a mapping")
+        else:
+            enabled = triage.get("enabled", "auto")
+            if enabled not in VALID_TRIAGE_ENABLED:
+                problems.append(
+                    "triage.enabled must be one of " f"{', '.join(VALID_TRIAGE_ENABLED)} "
+                    f"(found {enabled!r})"
+                )
+            band = triage.get("min_severity_band")
+            if band is not None and band not in VALID_SEVERITY_BANDS:
+                problems.append(
+                    "triage.min_severity_band must be one of "
+                    f"{', '.join(VALID_SEVERITY_BANDS)} (found {band!r})"
+                )
+            include = triage.get("include_unverified")
+            if include is not None and not isinstance(include, bool):
+                problems.append(
+                    f"triage.include_unverified must be a boolean (found {include!r})"
+                )
 
     # -------------------------------------------------------------- profiles
     custom = raw.get("profiles") or {}
@@ -480,6 +609,17 @@ def validate_config(raw: dict[str, Any]) -> list[str]:
         timeout = tooling.get("timeout_s", 120)
         if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout < 1:
             problems.append(f"tooling.timeout_s must be a positive integer (found {timeout!r})")
+
+    # --------------------------------------------------------------- output
+    output = raw.get("output") or {}
+    if not isinstance(output, dict):
+        problems.append("output must be a mapping")
+    else:
+        level = output.get("level", "default")
+        if level not in VALID_OUTPUT_LEVELS:
+            problems.append(
+                f"output.level must be one of: {', '.join(VALID_OUTPUT_LEVELS)} (got {level!r})"
+            )
 
     # ------------------------------------------------------------- workspace
     workspace = raw.get("workspace")

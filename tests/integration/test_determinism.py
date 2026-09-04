@@ -34,10 +34,11 @@ def _artifacts(root: Path) -> dict[str, str]:
         if path.name == "state.json":
             continue
         document = json.loads(path.read_text())
-        document.pop("scan_id", None)
-        payload = document.get("payload")
-        if isinstance(payload, dict):
-            payload.pop("scan_id", None)
+        if isinstance(document, dict):  # raw external-tool reports may be arrays
+            document.pop("scan_id", None)
+            payload = document.get("payload")
+            if isinstance(payload, dict):
+                payload.pop("scan_id", None)
         relative = str(path.relative_to(root))
         if relative.startswith(".secscan/reports/"):
             relative = ".secscan/reports/<scan-id>.json"
@@ -63,6 +64,72 @@ def test_two_scans_of_identical_input_are_byte_identical(tmp_path: Path) -> None
     assert set(first) == set(second)
     for name in sorted(first):
         assert first[name] == second[name], f"{name} differs between identical runs"
+
+
+def _scan_batch(root: Path, monkeypatch) -> None:
+    """Endpoint + batch policy against the fake provider (feature 012, SC-003)."""
+    from tests.helpers.fake_provider import FakeProvider
+
+    monkeypatch.setenv("DETERMINISM_KEY", "sk-fake")
+    write_config(
+        root,
+        {
+            "llm": {
+                "endpoint": {
+                    "provider": "anthropic",
+                    "api_key_env": "DETERMINISM_KEY",
+                    "model_map": {"local": "m-local", "segment": "m-segment"},
+                }
+            }
+        },
+    )
+    run_mod.run_scan(
+        root, transport=FakeProvider("anthropic"), full=True,
+        clock=lambda: 1_700_000_000.0, sleep=lambda s: None,
+    )
+
+
+def test_two_batch_scans_of_identical_input_are_byte_identical(tmp_path: Path, monkeypatch):
+    """Feature 012 SC-003: answers and findings under the batch policy are deterministic."""
+    from tests.fixtures.single_repo_shop import build
+
+    first_root = build(tmp_path / "a")
+    second_root = build(tmp_path / "b")
+    _scan_batch(first_root, monkeypatch)
+    _scan_batch(second_root, monkeypatch)
+    first = _artifacts(first_root)
+    second = _artifacts(second_root)
+    assert set(first) == set(second)
+    assert any(name.startswith(".secscan/analysis/answers/") for name in first)
+    for name in sorted(first):
+        assert first[name] == second[name], f"{name} differs between identical batch runs"
+
+
+def test_answer_files_identical_across_policies(tmp_path: Path, monkeypatch) -> None:
+    """Feature 012 SC-003: an answer file never records how it was obtained."""
+    from tests.fixtures.single_repo_shop import build
+    from tests.helpers.fake_provider import FakeProvider
+
+    batch_root = build(tmp_path / "batch")
+    live_root = build(tmp_path / "live")
+    _scan_batch(batch_root, monkeypatch)
+    write_config(
+        live_root,
+        {
+            "llm": {
+                "endpoint": {
+                    "provider": "anthropic",
+                    "api_key_env": "DETERMINISM_KEY",
+                    "model_map": {"local": "m-local", "segment": "m-segment"},
+                }
+            },
+            "execution_policy": {"mode": "interactive"},
+        },
+    )
+    run_mod.run_scan(live_root, transport=FakeProvider("anthropic"), full=True)
+    batch = {k: v for k, v in _artifacts(batch_root).items() if "/answers/" in k}
+    live = {k: v for k, v in _artifacts(live_root).items() if "/answers/" in k}
+    assert batch and batch == live
 
 
 def test_rescanning_the_same_tree_is_stable(tmp_path: Path) -> None:

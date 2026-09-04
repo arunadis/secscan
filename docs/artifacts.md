@@ -21,13 +21,23 @@ history with `--commit-artifacts`.
 ├── handoff/
 │   ├── requests/<request-id>.json      prompt + bounded packet (agent mode)
 │   └── responses/<request-id>.json     agent's schema-conforming answers
+├── analysis/answers/<request-id>.json  persisted model answers (endpoint mode) — resumption
+│                                       state, not an artifact: safe to delete, forces re-analysis
 ├── findings/
 │   ├── local/                  per-stage raw findings
-│   └── correlated/             deduplicated, related, grouped
+│   ├── correlated/             deduplicated, related, grouped
+│   └── triaged.json            post-triage finding set + triage suppressions + summary
+├── triage/
+│   ├── packets/<id>.json       per-finding triage packets (redacted, budgeted)
+│   ├── decisions.json          every attempted verdict: applied/rejected/degraded/…
+│   └── declarations.json       YOUR file: recorded answers to flagged findings
+│                               (input, not artifact — see Configuration)
 ├── system-review.md            cross-boundary review narrative
 ├── reports/<scan-id>.{md,json,html}    one data set, three renderings
-├── state.json                  checkpoints, file hashes (resume + change detection)
-└── usage.json                  tokens per stage/tier, savings vs baseline
+├── state.json                  checkpoints, file hashes (resume + change detection),
+│                               and meta.analysis_batches — the provider batch ledger
+├── usage.json                  tokens per stage/tier, savings vs baseline
+└── scan.log                    progress trace of the latest run (diagnostic, NOT an artifact)
 ```
 
 ## How artifacts are used
@@ -41,8 +51,28 @@ history with `--commit-artifacts`.
 - **Auditability.** A finding in the report traces back through
   `findings/correlated/` to its local evidence and the context packets the model
   actually saw. A trail rendered with dataflow arrows contains only traced edges.
-- **Cost accounting.** `usage.json` records tokens per stage and model tier, and
-  the measured savings against a maximal-context baseline.
+- **Cost accounting.** `usage.json` records tokens per stage and model tier, the
+  batch/interactive split with an estimated saving (50% × batch token share,
+  labelled as assuming the provider's published batch discount), and the measured
+  savings against a maximal-context baseline.
+- **Finding triage.** On `full`/`audit` profiles the correlated findings go through
+  one more reasoning round (`finding_triage`): the reasoner confirms, downgrades,
+  refutes-with-citations, or flags each candidate. Verdicts that refute or regrade
+  apply only after the pipeline mechanically re-verifies every citation against
+  the repository; triage-verified suppressions appear in the report's suppression
+  list (ground `triage-control-present`) and flagged findings render in the
+  report's Awaiting Verification section. Persisted triage answers follow the same
+  content-addressed reuse rule as analysis answers, so a re-run replays outcomes
+  byte-identically.
+- **Answers and the batch ledger (endpoint mode).** `analysis/answers/<request-id>.json`
+  holds exactly `{request_id, answer_key, content}` for every model answer, whether it
+  arrived by batch, by fallback, or live. The key is derived from the serialized
+  request and the model tier, so an answer is reused only for a byte-identical request
+  — and the file is identical whichever policy produced it (it is *inside* the
+  determinism comparison and the redaction sweep). `state.json → meta.analysis_batches`
+  records each submitted batch (provider handle, items with their keys, submission and
+  expiry times, status); it is what lets an interrupted wait resume the same batch. Both
+  are cleared by `--full`.
 
 ## Schema versioning
 
@@ -62,6 +92,21 @@ instead of going quiet: blocked values and budget-dropped files are recorded wit
 cause, criticality, and impact; unaudited dependency domains are recorded as
 `could-not-check`, never clean. See
 [Security model — honest uncertainty](security-model.md#honest-uncertainty).
+
+## The scan log
+
+`scan.log` is the plain-text progress trace of the most recent `secscan run`:
+every stage, segment, tool, warning, heartbeat and terminal event at verbose
+detail, one line each with wall-clock and elapsed time, regardless of the
+terminal output level. It is written incrementally and overwritten by each run,
+so after a failed, interrupted or paused scan its last line names the stage (and
+segment or tool) that was in progress.
+
+It is a **diagnostic side file, not a scan artifact**: it has no JSON envelope or
+schema, carries timing that legitimately differs between runs, and is excluded
+from the byte-identical determinism comparison. It obeys the same content rule as
+everything else under `.secscan/` — identifiers, paths, counts, durations and
+report wording only — and is included in the credential redaction sweep.
 
 ## What never lands in an artifact
 

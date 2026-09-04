@@ -21,6 +21,8 @@ EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_NOT_READY = 2
 EXIT_AGENT_HANDOFF = 3
+#: Operator interrupt (Ctrl-C); the shell convention for SIGINT.
+EXIT_INTERRUPTED = 130
 
 
 def _parse_set(values: list[str] | None) -> dict[str, Any]:
@@ -102,9 +104,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument(
         "--policy",
-        choices=("interactive", "batch-offpeak"),
+        choices=("auto", "interactive", "batch", "batch-offpeak"),
         default=None,
-        help="Override the execution policy for this scan.",
+        help=(
+            "Execution policy for this scan (default: config value; "
+            "auto = batch when an endpoint is configured)."
+        ),
     )
     run.add_argument(
         "--set",
@@ -115,6 +120,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--segment", default=None, help="Re-run analysis for one segment only.")
     run.add_argument("--full", action="store_true", help="Force a full scan (ignore checkpoints).")
+    output = run.add_mutually_exclusive_group()
+    output.add_argument(
+        "--output",
+        choices=("quiet", "default", "verbose"),
+        default=None,
+        help="Progress output level on stderr (overrides output.level; default: default).",
+    )
+    output.add_argument(
+        "-q", dest="output", action="store_const", const="quiet",
+        help="Progress off: final summary only (same as --output quiet).",
+    )
+    output.add_argument(
+        "-v", dest="output", action="store_const", const="verbose",
+        help="Per-segment budget/escalation and per-tool detail (same as --output verbose).",
+    )
 
     sub.add_parser("status", parents=[common], help="Show install and scan state.")
 
@@ -202,15 +222,20 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    from config.loader import ConfigError, ConfigNotFound
+    from config.loader import ConfigError, ConfigNotFound, load
+    from pipeline import progress
     from pipeline import run as run_mod
     from pipeline.llm_client import AgentHandoff
+    from pipeline.providers import EndpointError
+    from pipeline.redact import Redactor
+    from pipeline.state import LOG_FILE_NAME, SCAN_DIR_NAME
 
     overrides = _parse_set(args.overrides)
     environ_overrides = None
-    if args.policy or args.tool_timeout:
-        # Execution policy and tooling timeout are config, not profile: use the
-        # documented env overrides (SECSCAN_<SECTION>_<KEY>).
+    output = getattr(args, "output", None)
+    if args.policy or args.tool_timeout or output:
+        # Execution policy, tooling timeout and output level are config, not
+        # profile: use the documented env overrides (SECSCAN_<SECTION>_<KEY>).
         import os
 
         environ_overrides = dict(os.environ)
@@ -218,7 +243,25 @@ def cmd_run(args: argparse.Namespace) -> int:
             environ_overrides["SECSCAN_EXECUTION_POLICY_MODE"] = args.policy
         if args.tool_timeout:
             environ_overrides["SECSCAN_TOOLING_TIMEOUT_S"] = str(args.tool_timeout)
+        if output:
+            environ_overrides["SECSCAN_OUTPUT_LEVEL"] = output
 
+    # Config is loaded here, before any progress reporter exists: a project
+    # that is not initialised gets today's guidance and nothing else — no
+    # reporter, no scan.log, no .secscan/ directory (feature 011, R5).
+    store_dir = Path(args.workdir).resolve() / SCAN_DIR_NAME
+    try:
+        config = load(store_dir, environ=environ_overrides)
+    except (ConfigNotFound, ConfigError) as exc:
+        print(str(exc), file=sys.stderr)
+        return EXIT_ERROR
+
+    redactor = Redactor(config.redaction_patterns, **run_mod._entropy_kwargs(config))
+    reporter = progress.build_reporter(
+        progress.OutputLevel.from_str(config.output_level),
+        stream=sys.stderr,
+        log_path=store_dir / LOG_FILE_NAME,
+    )
     try:
         result = run_mod.run_scan(
             args.workdir,
@@ -227,22 +270,70 @@ def cmd_run(args: argparse.Namespace) -> int:
             full=args.full,
             only_segment=args.segment,
             environ=environ_overrides,
+            progress=reporter,
         )
     except (ConfigNotFound, ConfigError) as exc:
+        reporter.failed(str(exc).splitlines()[0])
+        reporter.close()
         print(str(exc), file=sys.stderr)
         return EXIT_ERROR
     except ValueError as exc:  # unknown segment / profile
+        reporter.failed(str(exc))
+        reporter.close()
         print(str(exc), file=sys.stderr)
         return EXIT_ERROR
     except AgentHandoff as handoff:
+        reporter.paused(len(handoff.pending))
+        reporter.close()
         print(handoff.instructions())
         return EXIT_AGENT_HANDOFF
+    except EndpointError as exc:
+        # Exhausted retries or a terminal provider error (feature 012, FR-017): one
+        # redacted line, no traceback; persisted answers make the re-run resume.
+        message = redactor.redact(str(exc)).text
+        reporter.failed(message)
+        reporter.close()
+        print(message, file=sys.stderr)
+        where = f" from {exc.request_id}" if exc.request_id else ""
+        print(
+            "re-run to resume: segments already analysed are kept; the scan continues"
+            f"{where}",
+            file=sys.stderr,
+        )
+        return EXIT_ERROR
+    except KeyboardInterrupt:
+        outstanding = _open_batches(store_dir)
+        reporter.interrupted(
+            f"re-run to resume; {outstanding} batch(es) still processing at the provider"
+            if outstanding
+            else None
+        )
+        reporter.close()
+        return EXIT_INTERRUPTED
+    except Exception as exc:
+        # Anything printed about a failure passes through the redactor first
+        # (FR-015); the exception itself propagates exactly as before.
+        reporter.failed(redactor.redact(str(exc)).text)
+        reporter.close()
+        raise
+    reporter.close()
 
     print(f"scan {result.scan_id}: {len(result.reported_findings)} finding(s) reported")
     print(f"report: {result.report_path}")
     if result.warnings:
         print(f"({len(result.warnings)} coverage note(s) recorded in the report)")
     return EXIT_OK
+
+
+def _open_batches(store_dir: Path) -> int:
+    """Provider batches still outstanding in the ledger (feature 012, FR-022)."""
+    from pipeline.batch_runner import BatchLedger
+    from pipeline.state import ArtifactStore
+
+    try:
+        return BatchLedger(ArtifactStore(store_dir.parent)).open_count()
+    except (OSError, ValueError):
+        return 0
 
 
 def cmd_status(args: argparse.Namespace) -> int:

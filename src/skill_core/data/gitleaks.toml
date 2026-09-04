@@ -1,0 +1,28 @@
+# secscan's gitleaks configuration (feature 008 follow-up).
+#
+# Extends the bundled default ruleset and excludes directories the repository
+# model itself never analyses (pipeline.state._SKIP_DIRS plus dot-directories):
+# scanner artifacts (.secscan/ — its own hashes and cached tool reports look
+# exactly like secrets), VCS metadata, installed agent skills, dependency and
+# build caches. Without this, every re-scan of an unchanged tree would report
+# "leaks" in the previous scan's state and be non-deterministic.
+
+title = "secscan gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "scanner artifacts, VCS metadata, agent skills, dependency and build caches"
+paths = [
+  '''(^|/)\.[^/]+/''',
+  '''(^|/)node_modules/''',
+  '''(^|/)__pycache__/''',
+  '''(^|/)venv/''',
+  '''(^|/)dist/''',
+  '''(^|/)build/''',
+  '''(^|/)target/''',
+  '''(^|/)vendor/''',
+  '''(^|/)site-packages/''',
+  '''(^|/)bower_components/''',
+]

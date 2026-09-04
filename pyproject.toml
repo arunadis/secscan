@@ -44,6 +44,7 @@ skill_core = [
     "schemas/*.json",
     "cwe_map.json",
     "data/*.json",
+    "data/*.toml",
     "data/advisories/*.json",
 ]
 profiles = ["*.yaml"]

@@ -16,9 +16,9 @@ import html
 import re
 from typing import Any
 
-from pipeline import cwe
+from pipeline import cwe, generate_report
 from pipeline.generate_report import BANDS
-from pipeline.usage import UsageTracker
+from pipeline.usage import SAVING_ASSUMPTION, UsageTracker
 
 _UNSAFE = re.compile(r"[^A-Za-z0-9\-_]")
 
@@ -162,7 +162,7 @@ def _render_header(
     add(f'<header id="top"><h1>Security Report — {_esc(report["workspace"]["id"])}</h1>')
     add(
         f'<p class="meta">Scan <code>{_esc(report["scan_id"])}</code> · '
-        f'mode {_esc(report["execution_mode"])} · '
+        f'mode {_esc(generate_report.mode_label(report))} · '
         f'profile {_esc(profile["name"])}{_esc(overrides)} · '
         f'repositories {_esc(", ".join(report["workspace"]["members"]))}</p>'
     )
@@ -218,6 +218,35 @@ def _render_finding(add, finding: dict[str, Any]) -> None:
         add(f'<li><strong>Compliance</strong>: {_esc(", ".join(finding["compliance_refs"]))}</li>')
     if finding.get("tool_ref"):
         add(f'<li><strong>Reported by</strong>: <code>{_esc(finding["tool_ref"])}</code></li>')
+    # Feature 013: triage verdicts and open questions render with the finding
+    # (never in place of its proven grading).
+    triage_block = finding.get("triage")
+    if triage_block:
+        previous = triage_block.get("previous_severity")
+        change = (
+            f" (was {_esc(previous)})"
+            if triage_block.get("verdict") == "downgraded" and previous is not None
+            else ""
+        )
+        provenance = (
+            " — resolved from a user-declared answer"
+            if triage_block.get("user_declaration")
+            else ""
+        )
+        add(
+            f'<li><strong>Triage</strong>: {_esc(triage_block["verdict"])}{change}'
+            f"{provenance}</li>"
+        )
+    if finding.get("awaiting_verification"):
+        add(
+            "<li><strong>Awaiting verification</strong>: "
+            f"{_esc(finding['awaiting_verification']['question'])}</li>"
+        )
+    if finding.get("triage_unresolved"):
+        add(
+            "<li><strong>Triage incomplete</strong>: "
+            f"{_esc(finding['triage_unresolved']['reason'])}</li>"
+        )
     add("</ul>")
 
     add(f'<p>{_esc(finding["description"])}</p>')
@@ -344,6 +373,17 @@ def _render_coverage(add, report: dict[str, Any]) -> None:
         add(f"<li>{line}</li>")
     for gap in coverage.get("blocking_gaps", []):
         add(f"<li>Blocking gap: {_esc(gap)}</li>")
+    triage_cov = coverage.get("triage")
+    if triage_cov is not None:
+        if triage_cov.get("enabled"):
+            add(
+                "<li>Finding triage: ran "
+                f"({_esc(triage_cov.get('candidates', 0))} candidates, "
+                f"{_esc(triage_cov.get('adjudicated', 0))} adjudicated); "
+                f"{_esc(triage_cov.get('mode_note', ''))}".rstrip() + "</li>"
+            )
+        else:
+            add("<li>Finding triage: disabled (profile/config)</li>")
     for limitation in coverage.get("tool_limitations", []):
         # Feature 008 (FR-009): external tooling the report implicitly lacks,
         # named with its reason — absence never reads as clean.
@@ -377,6 +417,31 @@ def _render_coverage(add, report: dict[str, Any]) -> None:
             )
             for evidence in record["evidence"]:
                 add(f"<li>{_esc(evidence)}</li>")
+            add("</ul></li>")
+        add("</ul></section>")
+
+    if report.get("awaiting_verification"):
+        # Feature 013: findings the triage round could not settle, with the
+        # question that would settle each. Entries remain in the finding list.
+        awaiting = report["awaiting_verification"]
+        add(
+            f'<section id="awaiting-verification"><h2>Awaiting verification '
+            f"({len(awaiting)})</h2>"
+        )
+        add(
+            "<p>These findings depend on facts outside the repository. Answer a "
+            "question in <code>.secscan/triage/declarations.json</code> and re-run "
+            "the scan to resolve it.</p><ul>"
+        )
+        for item in awaiting:
+            location = item.get("location") or {}
+            add(
+                f"<li><strong>{_esc(item['finding_id'])}</strong> "
+                f"(<code>{_esc(location.get('repo'))}:{_esc(location.get('file'))}</code>)"
+                f"<ul><li>Question: {_esc(item['question'])}</li>"
+            )
+            if item.get("settling_evidence_hint"):
+                add(f"<li>Settling evidence: {_esc(item['settling_evidence_hint'])}</li>")
             add("</ul></li>")
         add("</ul></section>")
 
@@ -422,6 +487,10 @@ def _render_usage(add, report: dict[str, Any]) -> None:
         ("Output tokens", f"{usage.total_output_tokens:,}"),
         ("Batch / interactive", f"{usage.batch_invocations} / {usage.interactive_invocations}"),
         ("Batch fallbacks", str(usage.fallbacks)),
+        (
+            "Estimated saving vs interactive pricing",
+            f"{usage.estimated_saving_percent}% (assumes the {SAVING_ASSUMPTION})",
+        ),
         ("Savings vs maximal-context baseline", f"{usage.savings_factor}x"),
     ]
     for metric, value in rows:

@@ -23,8 +23,10 @@ from typing import Any
 from pipeline import prompts
 from pipeline.budget import estimate_tokens
 from pipeline.build_context import ContextBuilder
-from pipeline.llm_client import AnalysisClient, AnalysisRequest
+from pipeline.llm_client import AnalysisClient, AnalysisRequest, AnalysisResponse
 from pipeline.usage import UsageTracker
+
+__all__ = ["EscalationRunner", "SegmentOutcome", "needs_escalation"]
 
 
 @dataclass
@@ -54,6 +56,9 @@ def _needs_escalation(content: str) -> bool:
     if isinstance(document, dict):
         return bool(document.get("needs_escalation"))
     return False
+
+
+needs_escalation = _needs_escalation
 
 
 class EscalationRunner:
@@ -90,17 +95,48 @@ class EscalationRunner:
         on_packet: Callable[[dict[str, Any]], None] | None = None,
     ) -> SegmentOutcome:
         outcome = SegmentOutcome(segment_id=segment["id"], content="", escalation_level=1)
-
         for level in range(1, self.max_level + 1):
-            packet = self.builder.build(segment, level, flows)
-            request = self._fit(segment, packet, level)
-            self.builder.write(packet)
-            outcome.packets.append(packet)
-            if on_packet:
-                on_packet(packet)
-
+            request, packet = self.prepare(segment, level, flows, on_packet)
             response = self.client.run(request)
+            if not self.absorb(segment, outcome, request, response, packet):
+                return outcome
+        return outcome
 
+    def prepare(
+        self,
+        segment: dict[str, Any],
+        level: int,
+        flows: list[Any] | None = None,
+        on_packet: Callable[[dict[str, Any]], None] | None = None,
+    ) -> tuple[AnalysisRequest, dict[str, Any]]:
+        """Build, fit, and record the level-``level`` request for ``segment``.
+
+        Shared by the per-segment ladder and the batch round runner (feature 012) so
+        both policies send exactly the same content.
+        """
+        packet = self.builder.build(segment, level, flows)
+        request = self._fit(segment, packet, level)
+        self.builder.write(packet)
+        if on_packet:
+            on_packet(packet)
+        return request, packet
+
+    def absorb(
+        self,
+        segment: dict[str, Any],
+        outcome: SegmentOutcome,
+        request: AnalysisRequest,
+        response: AnalysisResponse,
+        packet: dict[str, Any],
+    ) -> bool:
+        """Record ``response`` into ``outcome``; return True when escalation continues.
+
+        A cached response (persisted answer from an earlier run) is not counted in
+        this run's usage: the report describes only what this run actually sent.
+        """
+        level = request.escalation_level
+        outcome.packets.append(packet)
+        if not response.cached:
             self.usage.record(
                 self.stage,
                 response.input_tokens,
@@ -113,21 +149,17 @@ class EscalationRunner:
             if response.fell_back and response.fallback_reason:
                 self.usage.record_fallback(request.id, response.fallback_reason)
 
-            outcome.content = response.content
-            outcome.escalation_level = level
-            outcome.pending = response.pending
+        outcome.content = response.content
+        outcome.escalation_level = level
+        outcome.pending = response.pending
 
-            if response.pending:
-                return outcome
-            if not _needs_escalation(response.content):
-                return outcome
-            outcome.escalated = True
-
-            # Nothing more to add: the packet already holds the whole segment.
-            if level >= 3 and len(packet["source"]) >= len(segment["files"]):
-                return outcome
-
-        return outcome
+        if response.pending or not _needs_escalation(response.content):
+            return False
+        outcome.escalated = True
+        if level >= self.max_level:
+            return False
+        # Nothing more to add: the packet already holds the whole segment.
+        return not (level >= 3 and len(packet["source"]) >= len(segment["files"]))
 
     def _fit(
         self, segment: dict[str, Any], packet: dict[str, Any], level: int

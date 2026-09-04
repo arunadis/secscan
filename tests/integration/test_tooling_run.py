@@ -97,6 +97,20 @@ def test_format_drift_is_rejected_as_tool_failure(tmp_path, monkeypatch) -> None
     ), "no partial merges from a drifted report"
 
 
+def test_go_bin_only_tool_is_executed_during_scan(tmp_path, monkeypatch) -> None:
+    """A tool present only in $GOBIN (off PATH) is discovered AND executed: the
+    runner resolves argv0 the same way discovery does."""
+    root = copy_fixture("vuln_dep", tmp_path)
+    go_bin = install_shims(tmp_path / "gopath", {"gitleaks": "gitleaks.json"})
+    monkeypatch.setenv("GOBIN", str(go_bin))
+    _scan(root, monkeypatch, {"npm": "npm_audit.json"})  # PATH = npm shim dir only
+
+    runs = _runs(root)
+    assert runs["gitleaks"]["status"] == "ran", runs.get("gitleaks")
+    assert runs["gitleaks"]["invocation"].startswith(str(go_bin / "gitleaks"))
+    assert runs["gitleaks"]["tool_version"] == "0.0.0-fixture"
+
+
 def test_zero_tool_run_matches_builtin_output(tmp_path, monkeypatch) -> None:
     """SC-005 / FR-010: with no external tools the scan is unchanged + declared."""
     root = copy_fixture("vuln_dep", tmp_path)

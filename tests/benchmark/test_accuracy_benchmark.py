@@ -65,6 +65,76 @@ def test_usage_baseline_is_recorded_with_its_profile_and_target() -> None:
     assert payload["min_acceptable_savings"] < payload["savings_vs_maximal_context"]
 
 
+def test_defect_class_triage_correctness(tmp_path) -> None:
+    """FR-016: triage correctness is its own release-blocking defect class.
+
+    The corpus (cases/triage_ground_truth.json) mirrors the audited baseline's
+    disprovable classes. Each entry declares its expected triage outcome next to
+    the fixture; the gate runs the full scan with a scripted reasoning answer and
+    compares the outcome recorded in the scan's own triage artifacts.
+    """
+    import importlib
+
+    entries = json.loads(
+        (Path(__file__).parent / "cases" / "triage_ground_truth.json").read_text()
+    )["entries"]
+    assert entries, "the triage corpus is empty"
+    module = importlib.import_module("tests.fixtures.triage_targets")
+
+    for entry in entries:
+        root = tmp_path / entry["id"]
+        builder = module.build_repo
+        member = builder(root)
+        write_config(member)
+        answer = getattr(module, entry["answer"])  # corpus-driven selection
+        result = run_mod.run_scan(member, responder=module.scripted_responder(answer),
+                                  full=True)
+        store = member / ".secscan"
+        suppressions = result.report.get("suppressions") or []
+        awaiting = result.report.get("awaiting_verification") or []
+        decisions = json.loads(
+            (store / "triage" / "decisions.json").read_text()
+        )["payload"]["decisions"]
+
+        annotation = entry["annotation"]
+        if annotation == "expect-refuted":
+            assert any(s["disproof_ground"] == "triage-control-present"
+                       for s in suppressions), entry["id"]
+            verdicts = {d["verdict_attempted"] for d in decisions}
+            assert "refuted" in verdicts, entry["id"]
+        elif annotation == "expect-flagged":
+            assert awaiting, entry["id"]
+            assert not any(s["disproof_ground"] == "triage-control-present"
+                           for s in suppressions), entry["id"]
+        elif annotation == "must-survive":
+            # The credential finding survives every refutation aimed at the code
+            # finding, and its grading is intact — zero true-positive loss (SC-002).
+            assert any(f["cwe"] == "CWE-798" and f["severity_score"] >= 7.0
+                       for f in result.reported_findings), entry["id"]
+            cred_decisions = [
+                d for d in decisions
+                if any(f["id"] == d["finding_id"] and f["cwe"] == "CWE-798"
+                       for f in result.findings)
+            ]
+            assert all(d["verdict_attempted"] != "refuted" or d["outcome"] != "applied"
+                       for d in cred_decisions), entry["id"]
+        else:  # pragma: no cover - corpus discipline
+            raise AssertionError(f"unknown triage annotation: {annotation}")
+
+    # FR-017: triage never changes what detection produced — decisions can only
+    # remove from or annotate the deterministic stream, and the pre-triage
+    # artifact must still show both seeds.
+    root = tmp_path / "recall-check"
+    member = module.build_repo(root)
+    write_config(member)
+    run_mod.run_scan(member, responder=module.scripted_responder(
+        module.REFUTING_ANSWER), full=True)
+    correlated = json.loads(
+        (member / ".secscan" / "findings" / "correlated.json").read_text()
+    )["payload"]["findings"]
+    assert {f["cwe"] for f in correlated} == {"CWE-862", "CWE-798"}
+
+
 def test_defect_class_missed_detection(tmp_path) -> None:
     """FR-011/D5. Baseline: 5 verified misses across the two reference scans.
 

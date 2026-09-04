@@ -43,6 +43,10 @@
         "endpoint-batch"
       ]
     },
+    "execution_policy_source": {
+      "enum": ["explicit", "default"],
+      "description": "default = the batch policy was chosen by execution_policy.mode auto"
+    },
     "profile": {
       "type": "object",
       "required": [
@@ -300,6 +304,18 @@
             }
           }
         },
+        "triage": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Feature 013 (FR-006/FR-009): methodology note — whether the finding-triage round ran, the consultation boundary in effect, and adjudication counts.",
+          "required": ["enabled"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "candidates": { "type": "integer", "minimum": 0 },
+            "adjudicated": { "type": "integer", "minimum": 0 },
+            "mode_note": { "type": "string" }
+          }
+        },
         "resolution_tiers": {
           "type": "object",
           "additionalProperties": false,
@@ -350,12 +366,17 @@
           "tool_id": {
             "type": "string"
           },
+          "provenance": {
+            "enum": ["user-declared"],
+            "description": "Feature 013: set when the suppression rests on an operator's recorded declaration rather than pipeline-derived evidence."
+          },
           "disproof_ground": {
             "enum": [
               "package-absent",
               "version-outside-range",
               "location-unresolvable",
-              "component-absent"
+              "component-absent",
+              "triage-control-present"
             ]
           },
           "evidence": {
@@ -365,6 +386,25 @@
             },
             "minItems": 1
           }
+        }
+      }
+    },
+    "awaiting_verification": {
+      "type": "array",
+      "description": "Feature 013: findings the triage round flagged with a concrete question for the operator, or an attempted verdict whose citations failed re-verification. Sorted by finding id; each finding remains in findings_by_band with its proven grading.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["finding_id", "location", "question", "provenance"],
+        "properties": {
+          "finding_id": {
+            "type": "string",
+            "pattern": "^SEC-[0-9]{4,}$"
+          },
+          "location": { "type": "object" },
+          "question": { "type": "string", "minLength": 1 },
+          "settling_evidence_hint": { "type": "string" },
+          "provenance": { "enum": ["triage", "user-declared"] }
         }
       }
     }

@@ -734,6 +734,76 @@
     "scanner": {
       "type": "string",
       "description": "Feature 008: registry id of the external tool that produced this finding."
+    },
+    "triage": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Feature 013: record of an applied downgrade or user-declared resolution from the finding-triage round. Provenance of the applied verdict is auditable here; the finding's own evidence and grading remain visible.",
+      "required": ["verdict", "rationale"],
+      "properties": {
+        "verdict": {
+          "enum": ["confirmed", "downgraded", "refuted", "flagged"]
+        },
+        "rationale": {
+          "type": "string"
+        },
+        "citations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["repo", "file", "line_start", "line_end", "pattern"],
+            "properties": {
+              "repo": { "type": "string" },
+              "file": { "type": "string" },
+              "line_start": { "type": "integer", "minimum": 1 },
+              "line_end": { "type": "integer", "minimum": 1 },
+              "symbol": { "type": "string" },
+              "pattern": { "type": "string" }
+            }
+          }
+        },
+        "previous_severity": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 10.0
+        },
+        "previous_confidence": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "user_declaration": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "set when a user-recorded declaration (not pipeline-derived evidence) produced this outcome",
+          "required": ["answer", "resolution"],
+          "properties": {
+            "answer": { "type": "string" },
+            "resolution": { "enum": ["downgrade", "refute"] }
+          }
+        }
+      }
+    },
+    "awaiting_verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Feature 013: the finding was flagged by the triage round with a concrete open question. Grading is untouched; the flag is an addition, not a suppression.",
+      "required": ["question", "provenance"],
+      "properties": {
+        "question": { "type": "string", "minLength": 1 },
+        "settling_evidence_hint": { "type": "string" },
+        "provenance": { "enum": ["triage", "user-declared"] }
+      }
+    },
+    "triage_unresolved": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Feature 013: the triage round ran but did not adjudicate this finding (unanswered request or rejected verdict). Recorded, never silent.",
+      "required": ["reason"],
+      "properties": {
+        "reason": { "type": "string", "minLength": 1 }
+      }
     }
   }
 }

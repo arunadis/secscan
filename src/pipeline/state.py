@@ -20,6 +20,15 @@ from pipeline.schemas import SCHEMA_VERSION, validate
 
 TOOL_VERSION = "0.1.0"
 SCAN_DIR_NAME = ".secscan"
+#: Plain-text progress trace written by every run (feature 011). A diagnostic
+#: side file, not an artifact: no envelope, excluded from determinism checks.
+LOG_FILE_NAME = "scan.log"
+#: Persisted model answers, one file per analysis request (feature 012). Resumption
+#: state keyed by the serialized request: a request whose answer is present and whose
+#: key matches is never sent again. Deterministic given deterministic model output.
+ANSWERS_DIR = "analysis/answers"
+#: ``state.json`` meta key holding the provider batch ledger (feature 012).
+BATCH_LEDGER_META = "analysis_batches"
 
 #: Ordered pipeline stages. Resume walks this list and skips stages whose
 #: recorded resume key still matches.
@@ -53,6 +62,7 @@ STAGES: tuple[str, ...] = (
     "calibrate",
     "reproduce",
     "consistency",
+    "finding_triage",
     "system_review",
     "generate_report",
 )
@@ -302,6 +312,15 @@ class ArtifactStore:
         for name in names:
             if name in self._state["stages"]:
                 self._state["stages"][name] = StageRecord().to_dict()
+        if "segment_analysis" in names:
+            # Answers and the batch ledger are resumption state for that stage:
+            # re-analysing must not reuse them (feature 012, FR-008).
+            answers = self.dir / ANSWERS_DIR
+            if answers.is_dir():
+                for path in sorted(answers.iterdir()):
+                    if path.is_file():
+                        path.unlink()
+            (self._state.get("meta") or {}).pop(BATCH_LEDGER_META, None)
         self.save_state()
 
     def stage_summary(self) -> dict[str, str]:

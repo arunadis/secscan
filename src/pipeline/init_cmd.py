@@ -80,9 +80,10 @@ class InitReport:
             lines.extend(["", "External tools:"])
             for record in self.tooling:
                 version = record.get("version") or "version undetermined"
+                detail = f": {record['detail']}" if record.get("detail") else ""
                 lines.append(
                     f"  {record['tool_id']:<24} {record['source']:<17} {version}"
-                    f"  (network: {record['network']}) — {record['decision']}"
+                    f"  (network: {record['network']}) — {record['decision']}{detail}"
                 )
         if self.install_plan:
             lines.extend(["", "Install list presented:"])
@@ -145,7 +146,8 @@ def run_init(
     if config is not None:
         try:
             resolution = mode_mod.resolve(config, environ=environ)
-            execution_mode = resolution.mode.value
+            # Includes "(default policy)" when batch was chosen by mode: auto (012, FR-023).
+            execution_mode = resolution.mode_label
             checks.append(Check("analysis model", True, resolution.reason))
         except mode_mod.MissingCredential as exc:
             execution_mode = "endpoint (credential missing)"
@@ -341,6 +343,20 @@ def _tooling_flow(
         write_availability(project_root / SCAN_DIR_NAME, records)
         return records, [], None
 
+    # Capability check BEFORE consent: a tool with no registry channel whose
+    # package manager is on this machine can never be installed here, so it is
+    # declared missing with the reason and never offered (nothing to consent to).
+    not_installable = {
+        a.tool_id: (
+            provision.not_installable_reason(a.entry)
+            if a.entry is not None
+            else "no usable install channel on this machine"
+        )
+        for a in missing
+        if a.entry is None or provision.usable_channel(a.entry) is None
+    }
+    missing = [a for a in missing if a.tool_id not in not_installable]
+
     # Keyless credential-bearing tools never leave this init keyless without an
     # explicit decision: interactive runs warn + offer provide/proceed/skip per
     # tool BEFORE consent; every non-interactive context skips them unless
@@ -349,6 +365,7 @@ def _tooling_flow(
         a
         for a, record in zip(availabilities, records, strict=True)
         if a.source == "missing"
+        and a.tool_id not in not_installable
         and a.tool_id in spec_of
         and record.get("credential", {}).get("state") != credentials.STATE_AVAILABLE
     ]
@@ -418,17 +435,23 @@ def _tooling_flow(
         # unattended by definition: never prompt, never hang (contracts/cli.md)
         selection = set()  # skipped-no-consent
     else:
-        echo("")
-        echo("External tools to install:")
-        for line in install_plan:
-            echo(f"  - {line}")
-        try:
-            answer = (prompt or input)(
-                "Install which? (all / none / comma-separated numbers or ids): "
-            )
-        except (EOFError, OSError):  # defensive: treat unreadable stdin as "none"
-            answer = ""
-        selection = provision.resolve_selection(answer, missing)
+        if not_installable:
+            echo("")
+            echo("Not installable on this machine (skipped):")
+            for tool_id in sorted(not_installable):
+                echo(f"  - {tool_id} — {not_installable[tool_id]}")
+        if install_plan:
+            echo("")
+            echo("External tools to install:")
+            for line in install_plan:
+                echo(f"  - {line}")
+            try:
+                answer = (prompt or input)(
+                    "Install which? (all / none / comma-separated numbers or ids): "
+                )
+            except (EOFError, OSError):  # defensive: treat unreadable stdin as "none"
+                answer = ""
+            selection = provision.resolve_selection(answer, missing)
         decided_by = "skipped-by-user"
 
     if selection:
@@ -447,7 +470,10 @@ def _tooling_flow(
         result = results.get(availability.tool_id)
         spec = spec_of.get(availability.tool_id)
         if result is None:
-            if availability.tool_id in skipped_no_key:
+            if availability.tool_id in not_installable:
+                record["decision"] = "missing-declared"
+                record["detail"] = not_installable[availability.tool_id]
+            elif availability.tool_id in skipped_no_key:
                 record["decision"] = "skipped-no-key"
                 record["credential"] = {
                     "variable": spec.env_var,

@@ -56,7 +56,9 @@ src/
 │                  in-place upgrade
 ├── skill_core/    installable payload: SKILL.md, prompts/, schemas/, data/, cwe_map.json
 ├── pipeline/      deterministic scan stages + payload CLI; tooling/ drives external
-│                  scanners (provision, run, cross-check)
+│                  scanners (provision, run, cross-check); triage* modules run the
+│                  post-correlation finding-triage round (packets, verdict gates,
+│                  citation re-verification, verdict application, user declarations)
 ├── config/        config loading, strict validation, profiles, execution mode
 └── profiles/      built-in scan profiles as data
 tests/
@@ -80,6 +82,17 @@ specs/             spec-first history (001–009), per-feature spec/plan/contrac
 - **Budgets enforced against the serialized request**, never estimates.
 - **Agent handoff**: exit code 3 means reasoning files await answers in
   `.secscan/handoff/`; the scan resumes when re-run.
+- **Progress is a side channel**: `src/pipeline/progress.py` is the only module that
+  writes to the terminal during a scan (stderr) or to `.secscan/scan.log`. Never print
+  from a stage; emit through the reporter. Timing/level never enters an artifact, and
+  the three stdout summary lines in `scan_cli.cmd_run` are a frozen interface.
+- **Endpoint calls only through `src/pipeline/providers.py` adapters**: never build a
+  provider URL or request body anywhere else. Batch items reuse the interactive body
+  builder so batching can never change what content reaches the provider.
+- **Answer files hold exactly `{request_id, answer_key, content}`** (`.secscan/analysis/
+  answers/`): nothing policy-dependent (source, tokens, timestamps) — those belong in
+  `UsageTracker` or the batch ledger in `state.json`. A cached answer is never counted
+  in the run's usage.
 - Schemas are additive; breaking changes need a `schema_version` bump.
 - Adding a stack/rule/control must extend versioned data, not pipeline stages.
 

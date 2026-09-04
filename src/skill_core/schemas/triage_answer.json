@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "triage_answer.schema.json",
+  "title": "Finding Triage Verdict",
+  "description": "The reasoning layer's answer to one triage request (feature 013, contracts/triage-round.md §4). Closed verdict vocabulary; refutation and downgrades MUST cite evidence; flags carry a concrete user question.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["finding_id", "verdict"],
+  "properties": {
+    "finding_id": { "type": "string", "minLength": 1 },
+    "verdict": {
+      "type": "string",
+      "enum": ["confirmed", "downgraded", "refuted", "flagged"]
+    },
+    "rationale": { "type": "string", "minLength": 1 },
+    "user_question": { "type": "string", "minLength": 1 },
+    "settling_evidence_hint": { "type": "string", "minLength": 1 },
+    "citations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["repo", "file", "line_start", "line_end", "pattern"],
+        "properties": {
+          "repo": { "type": "string", "minLength": 1 },
+          "file": { "type": "string", "minLength": 1 },
+          "line_start": { "type": "integer", "minimum": 1 },
+          "line_end": { "type": "integer", "minimum": 1 },
+          "symbol": { "type": "string", "minLength": 1 },
+          "pattern": { "type": "string", "minLength": 3 }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "verdict": { "enum": ["refuted", "downgraded"] } } },
+      "then": {
+        "required": ["rationale", "citations"],
+        "allOf": [
+          { "not": { "required": ["user_question"] } },
+          { "not": { "required": ["settling_evidence_hint"] } }
+        ]
+      }
+    },
+    {
+      "if": { "properties": { "verdict": { "const": "flagged" } } },
+      "then": {
+        "required": ["user_question"],
+        "not": { "required": ["citations"] }
+      }
+    },
+    {
+      "if": { "properties": { "verdict": { "const": "confirmed" } } },
+      "then": {
+        "allOf": [
+          { "not": { "required": ["citations"] } },
+          { "not": { "required": ["user_question"] } },
+          { "not": { "required": ["settling_evidence_hint"] } }
+        ]
+      }
+    }
+  ]
+}

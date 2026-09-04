@@ -33,6 +33,7 @@ full:
     max_escalation_level: 3
     ingest_scanners: true
     system_review: true
+    finding_triage: true
   report_thresholds:
     min_severity_band: Medium
     min_confidence: 0.5
@@ -46,6 +47,7 @@ audit:
     max_escalation_level: 4
     ingest_scanners: true
     system_review: true
+    finding_triage: true
   report_thresholds:
     min_severity_band: None
     min_confidence: 0.0

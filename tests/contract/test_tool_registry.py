@@ -77,6 +77,25 @@ def test_project_local_mechanisms_are_closed(tools) -> None:
             )
 
 
+def test_payload_data_files_referenced_by_argv_ship(tools) -> None:
+    """``{payload_data}/<file>`` in an invocation must name a shipped data file
+    (both in the source tree and, via package-data, in the installed skill)."""
+    import tomllib
+
+    from pipeline import resources
+
+    for tool in tools:
+        for invoke in (tool.invoke, tool.invoke_project or {}):
+            for arg in invoke.get("argv") or []:
+                if "{payload_data}/" not in str(arg):
+                    continue
+                name = str(arg).split("{payload_data}/", 1)[1]
+                path = resources.data_dir() / name
+                assert path.is_file(), f"{tool.id}: {arg} -> {path} does not exist"
+                if path.suffix == ".toml":
+                    tomllib.loads(path.read_text())  # must parse
+
+
 def test_expected_tools_present(tools) -> None:
     ids = {tool.id for tool in tools}
     assert {

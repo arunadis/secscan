@@ -6,16 +6,22 @@ from datetime import datetime
 
 import pytest
 
-from config.mode import ExecutionMode, Resolution
+from config.mode import ExecutionMode, Resolution, resolve
+from pipeline.answers import AnswerStore
 from pipeline.budget import BudgetExceeded, TokenBudget
 from pipeline.llm_client import (
     AgentMediatedClient,
     AnalysisRequest,
     EndpointClient,
+    RetryPolicy,
     build_client,
+    build_endpoint_request,
     in_window,
+    parse_endpoint_response,
 )
+from pipeline.providers import EndpointError
 from pipeline.usage import UsageTracker
+from tests.helpers.fake_provider import FakeProvider, Scenario, legacy_adapter
 
 BUDGET = TokenBudget(12000, 3000, 0.75)
 
@@ -73,8 +79,11 @@ def endpoint_resolution(batch: bool = False) -> Resolution:
     )
 
 
-def fake_transport(**kwargs) -> str:
+def _legacy(**kwargs) -> str:
     return f"result from {kwargs['model']}"
+
+
+fake_transport = legacy_adapter(_legacy)
 
 
 def test_endpoint_client_uses_model_tier_for_level() -> None:
@@ -83,38 +92,142 @@ def test_endpoint_client_uses_model_tier_for_level() -> None:
     assert client.run(make_request(level="local")).model_tier == "haiku"
     assert client.run(make_request(level="segment")).model_tier == "sonnet"
     assert client.run(make_request(level="system")).model_tier == "opus"
+    assert client.supports_batch() is False
+    assert EndpointClient(endpoint_resolution(batch=True), "key",
+                          transport=fake_transport).supports_batch()
 
 
-def test_batch_submission_returns_job_handle() -> None:
-    client = EndpointClient(endpoint_resolution(batch=True), "key", transport=fake_transport)
-    job = client.submit_batch([make_request("a"), make_request("b")])
-    assert job.request_ids == ["a", "b"]
-    assert job.expires_at > job.submitted_at
-    assert client.supports_batch()
+def test_endpoint_client_passes_provider_and_base_url_to_transport() -> None:
+    """Regression: the configured provider/base_url must reach the transport."""
+    seen: dict = {}
 
+    def capture(**kwargs) -> str:
+        seen.update(kwargs)
+        return "ok"
 
-def test_expired_batch_falls_back_to_interactive_and_is_recorded() -> None:
-    """FR-016b: no silent skips or stalls; every fallback is recorded."""
-    client = EndpointClient(
-        endpoint_resolution(batch=True), "key", transport=fake_transport, batch_window_seconds=-1
+    resolution = Resolution(
+        mode=ExecutionMode.ENDPOINT_INTERACTIVE,
+        reason="test",
+        model_map={"segment": "gpt-x"},
+        provider="openai-compatible",
+        base_url="https://gateway.example/v1",
     )
-    usage = UsageTracker()
-    responses = client.run_batch_with_fallback(
-        [make_request("a"), make_request("b")],
-        on_fallback=usage.record_fallback,
+    EndpointClient(resolution, "key", transport=legacy_adapter(capture)).run(make_request())
+    assert seen["provider"] == "openai-compatible"
+    assert seen["base_url"] == "https://gateway.example/v1"
+    assert seen["model"] == "gpt-x"
+
+
+def test_terminal_http_error_is_typed_and_leaks_nothing() -> None:
+    """FR-016/FR-017: a 401 is not retried and the message carries metadata only."""
+    provider = FakeProvider("anthropic", Scenario(interactive={"seg-orders": [401]}))
+    client = EndpointClient(endpoint_resolution(), "sk-very-secret", transport=provider,
+                            retry=RetryPolicy(attempts=5, sleep=lambda s: None))
+    with pytest.raises(EndpointError) as info:
+        client.run(make_request())
+    exc = info.value
+    assert exc.transient is False and exc.attempts == 1 and exc.status == 401
+    assert exc.request_id == "req-1"
+    text = str(exc)
+    assert "sk-very-secret" not in text and "def f(): pass" not in text
+    assert "HTTP 401" in text
+    assert provider.interactive_calls == 1
+
+
+def test_answers_are_persisted_and_reused_without_a_second_call(tmp_path) -> None:
+    """FR-005/FR-008: a matching persisted answer short-circuits the transport."""
+    provider = FakeProvider("anthropic", answer=lambda cid, payload: '{"findings": []}')
+    answers = AnswerStore(tmp_path / "answers")
+    client = EndpointClient(endpoint_resolution(), "key", transport=provider, answers=answers)
+    first = client.run(make_request())
+    assert first.content == '{"findings": []}' and first.cached is False
+    assert provider.interactive_calls == 1
+    second = client.run(make_request())
+    assert second.cached is True and second.content == first.content
+    assert second.model_tier == "sonnet"
+    assert provider.interactive_calls == 1
+    assert client.run(make_request(level="local")).cached is False  # different tier -> miss
+
+
+def test_resolve_threads_provider_and_base_url_from_config() -> None:
+    from config import loader
+
+    config = loader.Config(
+        path=None,
+        raw={
+            "version": 1,
+            "llm": {
+                "mode": "endpoint",
+                "endpoint": {
+                    "provider": "openai-compatible",
+                    "api_key_env": "OPENAI_API_KEY",
+                    "base_url": "https://gateway.example/v1/",
+                    "model_map": {"segment": "gpt-x"},
+                },
+            },
+        },
     )
-    assert len(responses) == 2
-    assert all(r.fell_back for r in responses)
-    assert all(r.content for r in responses)  # actually analyzed, not skipped
-    assert usage.fallbacks == 2
-    assert "expired" in usage.fallback_log[0]["reason"]
+    resolution = resolve(config, {"OPENAI_API_KEY": "set"})
+    assert resolution.provider == "openai-compatible"
+    assert resolution.base_url == "https://gateway.example/v1"
+
+    default = resolve(
+        loader.Config(
+            path=None, raw={"version": 1, "llm": {"endpoint": {"api_key_env": "ANTHROPIC_API_KEY"}}}
+        ),
+        {"ANTHROPIC_API_KEY": "set"},
+    )
+    assert default.provider == "anthropic"
+    assert default.base_url is None
 
 
-def test_pending_batch_still_completes_every_item() -> None:
-    client = EndpointClient(endpoint_resolution(batch=True), "key", transport=fake_transport)
-    responses = client.run_batch_with_fallback([make_request("a")])
-    assert len(responses) == 1
-    assert responses[0].content
+COMMON = dict(model="m", api_key="sk-test", prompt="p", payload={"a": 1}, max_output_tokens=50)
+
+
+def test_anthropic_request_shape() -> None:
+    url, headers, body = build_endpoint_request(provider="anthropic", **COMMON)
+    assert url == "https://api.anthropic.com/v1/messages"
+    assert headers["x-api-key"] == "sk-test"
+    assert "authorization" not in headers
+    assert body["max_tokens"] == 50
+    assert body["messages"][0]["content"].endswith('{"a": 1}')
+
+
+def test_openai_compatible_request_shape_uses_bearer_and_chat_completions() -> None:
+    """Regression: an OpenAI key must never be posted to the Anthropic endpoint (401)."""
+    url, headers, body = build_endpoint_request(provider="openai-compatible", **COMMON)
+    assert url == "https://api.openai.com/v1/chat/completions"
+    assert headers["authorization"] == "Bearer sk-test"
+    assert "x-api-key" not in headers
+    assert body["max_completion_tokens"] == 50
+
+    url, _, _ = build_endpoint_request(
+        provider="openai-compatible", base_url="https://gw.example/v1/", **COMMON
+    )
+    assert url == "https://gw.example/v1/chat/completions"
+
+
+def test_base_url_overrides_anthropic_host() -> None:
+    url, _, _ = build_endpoint_request(
+        provider="anthropic", base_url="https://proxy.example", **COMMON
+    )
+    assert url == "https://proxy.example/v1/messages"
+
+
+def test_unknown_provider_is_rejected() -> None:
+    with pytest.raises(RuntimeError):
+        build_endpoint_request(provider="mystery", **COMMON)
+
+
+def test_parse_endpoint_response_per_provider() -> None:
+    assert (
+        parse_endpoint_response("anthropic", {"content": [{"type": "text", "text": "hi"}]}) == "hi"
+    )
+    openai_doc = {"choices": [{"message": {"role": "assistant", "content": "hello"}}]}
+    assert parse_endpoint_response("openai-compatible", openai_doc) == "hello"
+    parts_doc = {"choices": [{"message": {"content": [{"type": "text", "text": "x"}]}}]}
+    assert parse_endpoint_response("openai-compatible", parts_doc) == "x"
+    assert parse_endpoint_response("openai-compatible", {}) == ""
 
 
 def test_build_client_selects_backend() -> None:

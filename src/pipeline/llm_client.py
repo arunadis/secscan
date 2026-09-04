@@ -1,4 +1,4 @@
-"""Analysis execution clients (FR-007a, FR-016b, FR-027; research.md R4).
+"""Analysis execution clients (FR-007a, FR-016b, FR-027; research.md R4; feature 012).
 
 Two backends satisfy one interface:
 
@@ -6,26 +6,57 @@ Two backends satisfy one interface:
   reasoning, so the pipeline *externalises* the request: it writes the prompt and
   context packet to an artifact and expects the agent to write findings back.
   Nothing is sent anywhere by the scanner itself.
-* :class:`EndpointClient` — an operator-configured provider. Supports interactive
-  calls and a provider-agnostic batch abstraction (``submit_batch``/``poll``);
-  failed or expired batch items fall back to interactive execution and every
-  fallback is recorded (FR-016b).
+* :class:`EndpointClient` — an operator-configured provider, spoken to through a
+  :mod:`pipeline.providers` adapter. Interactive calls retry transient failures
+  (:class:`RetryPolicy`) and every answer is persisted in an
+  :class:`~pipeline.answers.AnswerStore` so a resumed scan never repeats a request.
+  Batch submission lives in :mod:`pipeline.batch_runner` and reuses the same adapter.
 """
 
 from __future__ import annotations
 
 import json
+import random
 import time
-import urllib.error
-import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from datetime import time as dtime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeVar
 
 from config.mode import ExecutionMode, Resolution
+from pipeline.answers import AnswerStore
 from pipeline.budget import TokenBudget, estimate_tokens
+from pipeline.providers import (
+    DEFAULT_BASE_URLS,
+    EndpointError,
+    HttpTransport,
+    ProviderAdapter,
+    adapter_for,
+    build_endpoint_request,
+    parse_endpoint_response,
+    path_of,
+    urllib_transport,
+)
+
+__all__ = [
+    "DEFAULT_BASE_URLS",
+    "AgentHandoff",
+    "AgentMediatedClient",
+    "AnalysisClient",
+    "AnalysisRequest",
+    "AnalysisResponse",
+    "EndpointClient",
+    "RetryPolicy",
+    "build_client",
+    "build_endpoint_request",
+    "in_window",
+    "parse_endpoint_response",
+    "parse_window",
+]
+
+T = TypeVar("T")
 
 
 @dataclass
@@ -59,6 +90,9 @@ class AnalysisResponse:
     fell_back: bool = False
     fallback_reason: str | None = None
     pending: bool = False
+    #: True when the content came from a persisted answer rather than a request made
+    #: in this run; such a response is never counted in this run's usage (feature 012).
+    cached: bool = False
 
 
 class AnalysisClient(Protocol):
@@ -182,17 +216,27 @@ class AgentMediatedClient:
         if self.request_dir is None:
             return
         self.request_dir.mkdir(parents=True, exist_ok=True)
+        if request.stage == "finding_triage":
+            # Feature 013: triage requests answer with the verdict vocabulary,
+            # not the findings shape.
+            instructions = (
+                "Answer this request by writing the triage verdict JSON described "
+                "in prompts/triage_finding.md (schema: schemas/triage_answer.json) to "
+                f"../responses/{request.id}.json, then re-run the scan command."
+            )
+        else:
+            instructions = (
+                "Answer this request by writing the findings JSON described in "
+                "prompts/segment_scan.md to "
+                f"../responses/{request.id}.json, then re-run the scan command."
+            )
         document = {
             "request_id": request.id,
             "stage": request.stage,
             "escalation_level": request.escalation_level,
             "estimated_tokens": request.estimated_tokens(),
             "budget": request.budget.to_dict(),
-            "instructions": (
-                "Answer this request by writing the findings JSON described in "
-                "prompts/segment_scan.md to "
-                f"../responses/{request.id}.json, then re-run the scan command."
-            ),
+            "instructions": instructions,
             "prompt": request.prompt,
             "context_packet": request.payload,
         }
@@ -200,158 +244,141 @@ class AgentMediatedClient:
         path.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n")
 
 
-# ------------------------------------------------------------------ endpoint
+# --------------------------------------------------------------------- retry
 
 
 @dataclass
-class BatchJob:
-    handle: str
-    request_ids: list[str]
-    submitted_at: float
-    expires_at: float
+class RetryPolicy:
+    """Bounded, jittered backoff for transient endpoint failures (FR-014, research R3).
+
+    ``attempts`` counts the initial try. Waits double from ``base_wait_s`` up to
+    ``max_wait_s`` (times a U(0.5, 1) jitter), a provider ``Retry-After`` is a
+    minimum, and the sum of waits never exceeds ``total_wait_s``.
+    """
+
+    attempts: int = 5
+    base_wait_s: float = 2.0
+    max_wait_s: float = 60.0
+    total_wait_s: float = 180.0
+    rng: random.Random = field(default_factory=random.Random)
+    sleep: Callable[[float], None] = time.sleep
+
+    def wait_for(self, attempt: int, retry_after_s: float | None) -> float:
+        """Wait before attempt ``attempt + 1`` (``attempt`` is 1-based)."""
+        base = min(self.max_wait_s, self.base_wait_s * (2 ** (attempt - 1)))
+        wait = base * self.rng.uniform(0.5, 1.0)
+        if retry_after_s is not None:
+            wait = max(wait, float(retry_after_s))
+        return wait
+
+    def execute(
+        self,
+        fn: Callable[[], T],
+        *,
+        request_id: str | None = None,
+        on_retry: Callable[[str | None, int, float, int | None], None] | None = None,
+    ) -> T:
+        waited = 0.0
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                return fn()
+            except EndpointError as exc:
+                if not exc.transient or attempt >= max(1, self.attempts):
+                    raise exc.with_attempts(attempt, request_id) from None
+                wait = self.wait_for(attempt, exc.retry_after_s)
+                if waited + wait > self.total_wait_s:
+                    raise exc.with_attempts(attempt, request_id) from None
+                if on_retry is not None:
+                    on_retry(request_id, attempt + 1, wait, exc.status)
+                self.sleep(wait)
+                waited += wait
+
+
+# ------------------------------------------------------------------ endpoint
 
 
 class EndpointClient:
-    """Provider-backed client with interactive and batch execution."""
+    """Provider-backed interactive client; persists answers and retries transients."""
 
     def __init__(
         self,
         resolution: Resolution,
         api_key: str,
         *,
-        transport: Any | None = None,
-        batch_window_seconds: int = 24 * 3600,
+        transport: HttpTransport | None = None,
+        answers: AnswerStore | None = None,
+        retry: RetryPolicy | None = None,
+        on_retry: Callable[[str | None, int, float, int | None], None] | None = None,
+        timeout: float = 120.0,
     ) -> None:
         self.mode = resolution.mode
         self.resolution = resolution
         self.api_key = api_key
-        self.transport = transport or _http_transport
-        self.batch_window_seconds = batch_window_seconds
-        self._jobs: dict[str, BatchJob] = {}
+        self.adapter: ProviderAdapter = adapter_for(
+            resolution.provider, api_key, resolution.base_url
+        )
+        self.transport: HttpTransport = transport or urllib_transport
+        self.answers = answers
+        self.retry = retry or RetryPolicy(
+            attempts=resolution.retry_attempts, max_wait_s=float(resolution.retry_max_wait_s)
+        )
+        self.on_retry = on_retry
+        self.timeout = timeout
 
     def supports_batch(self) -> bool:
         return self.mode is ExecutionMode.ENDPOINT_BATCH
 
-    # ------------------------------------------------------------ interactive
-
     def run(self, request: AnalysisRequest) -> AnalysisResponse:
         request.budget.check(request.estimated_tokens(), f"{request.stage}/{request.id}")
         tier = self.resolution.tier_for(request.level)
-        content = self.transport(
-            provider=str(self.resolution.model_map and "configured" or "configured"),
+
+        cached = self.answers.get(request, tier) if self.answers is not None else None
+        if cached is not None:
+            return self._response(request, cached, tier, cached=True)
+
+        url, headers, body = self.adapter.interactive(
             model=tier,
-            api_key=self.api_key,
             prompt=request.prompt,
             payload=request.payload,
             max_output_tokens=request.budget.max_output_tokens,
         )
+
+        def attempt() -> str:
+            try:
+                status, resp_headers, resp_body = self.transport(
+                    "POST", url, headers, body, timeout=self.timeout
+                )
+            except (ConnectionError, TimeoutError) as exc:
+                raise EndpointError(
+                    provider=self.adapter.name,
+                    path=path_of(url),
+                    status=None,
+                    transient=True,
+                    detail=type(exc).__name__,
+                ) from exc
+            if status >= 300:
+                raise self.adapter.error(status, resp_headers, resp_body, path=url)
+            return self.adapter.parse_interactive(resp_body)
+
+        content = self.retry.execute(attempt, request_id=request.id, on_retry=self.on_retry)
+        if self.answers is not None:
+            self.answers.put(request, tier, content)
+        return self._response(request, content, tier)
+
+    @staticmethod
+    def _response(
+        request: AnalysisRequest, content: str, tier: str, *, cached: bool = False
+    ) -> AnalysisResponse:
         return AnalysisResponse(
             request_id=request.id,
             content=content,
             input_tokens=request.estimated_tokens(),
             output_tokens=estimate_tokens(content),
             model_tier=tier,
+            cached=cached,
         )
-
-    # ----------------------------------------------------------------- batch
-
-    def submit_batch(self, requests: list[AnalysisRequest]) -> BatchJob:
-        for request in requests:
-            request.budget.check(request.estimated_tokens(), f"{request.stage}/{request.id}")
-        now = time.time()
-        handle = f"batch-{int(now)}-{len(requests)}"
-        job = BatchJob(
-            handle=handle,
-            request_ids=[r.id for r in requests],
-            submitted_at=now,
-            expires_at=now + self.batch_window_seconds,
-        )
-        self._jobs[handle] = job
-        return job
-
-    def poll(self, job: BatchJob) -> dict[str, Any]:
-        """Return ``{status, results}`` where status is done | pending | failed."""
-        if time.time() > job.expires_at:
-            return {"status": "failed", "results": {}, "reason": "batch window expired"}
-        return {"status": "pending", "results": {}}
-
-    def run_batch_with_fallback(
-        self,
-        requests: list[AnalysisRequest],
-        on_fallback: Any | None = None,
-    ) -> list[AnalysisResponse]:
-        """Submit as a batch; re-execute failed/expired items interactively (FR-016b)."""
-        if not requests:
-            return []
-        job = self.submit_batch(requests)
-        outcome = self.poll(job)
-        by_id = {r.id: r for r in requests}
-        responses: list[AnalysisResponse] = []
-
-        completed: dict[str, str] = outcome.get("results") or {}
-        for request_id, content in sorted(completed.items()):
-            request = by_id[request_id]
-            responses.append(
-                AnalysisResponse(
-                    request_id=request_id,
-                    content=content,
-                    input_tokens=request.estimated_tokens(),
-                    output_tokens=estimate_tokens(content),
-                    model_tier=self.resolution.tier_for(request.level),
-                    batch=True,
-                )
-            )
-
-        reason = outcome.get("reason") or f"batch status={outcome.get('status')}"
-        for request_id in sorted(set(by_id) - set(completed)):
-            request = by_id[request_id]
-            if on_fallback:
-                on_fallback(request_id, reason)
-            response = self.run(request)
-            response.fell_back = True
-            response.fallback_reason = reason
-            responses.append(response)
-        return responses
-
-
-def _http_transport(
-    *,
-    provider: str,
-    model: str,
-    api_key: str,
-    prompt: str,
-    payload: dict[str, Any],
-    max_output_tokens: int,
-) -> str:  # pragma: no cover - exercised only against a live endpoint
-    """Minimal Anthropic-shaped request. Replaced by tests via ``transport``."""
-    body = json.dumps(
-        {
-            "model": model,
-            "max_tokens": max_output_tokens,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt + "\n\n" + json.dumps(payload, sort_keys=True),
-                }
-            ],
-        }
-    ).encode()
-    req = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages",
-        data=body,
-        headers={
-            "content-type": "application/json",
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-        },
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            doc = json.loads(resp.read())
-    except (urllib.error.URLError, TimeoutError) as exc:
-        raise RuntimeError(f"analysis endpoint request failed: {exc}") from exc
-    blocks = doc.get("content") or []
-    return "".join(b.get("text", "") for b in blocks if isinstance(b, dict))
 
 
 # ------------------------------------------------------------ off-peak window
@@ -378,8 +405,11 @@ def build_client(
     api_key: str | None,
     *,
     responder: Any | None = None,
-    transport: Any | None = None,
+    transport: HttpTransport | None = None,
     handoff_dir: Path | None = None,
+    answers: AnswerStore | None = None,
+    retry: RetryPolicy | None = None,
+    on_retry: Callable[[str | None, int, float, int | None], None] | None = None,
 ) -> AnalysisClient:
     """Construct the client for the resolved execution mode."""
     if not resolution.mode.uses_endpoint:
@@ -390,4 +420,6 @@ def build_client(
         )
     if not api_key:
         raise RuntimeError("endpoint mode requires an API key")
-    return EndpointClient(resolution, api_key, transport=transport)
+    return EndpointClient(
+        resolution, api_key, transport=transport, answers=answers, retry=retry, on_retry=on_retry
+    )

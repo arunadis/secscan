@@ -51,8 +51,9 @@ the scan command to continue.
 7. normalize_findings      # schema enforcement + CWE/OWASP mapping
 8. verify + reproduce      # static verification, reproduction blocks
 9. correlate_findings      # dedupe, relate, group
-10. SYSTEM REVIEW          # <- your reasoning, cross-segment
-11. generate_report        # unified report + usage summary
+10. FINDING TRIAGE         # <- your reasoning, per finding (full/audit profiles)
+11. SYSTEM REVIEW          # <- your reasoning, cross-segment
+12. generate_report        # unified report + usage summary
 ```
 
 Run the pipeline with the scan command (resumes automatically as needed). From
@@ -61,7 +62,7 @@ this skill directory, put `scripts/` on `PYTHONPATH`:
 ```bash
 export PYTHONPATH="$(dirname "$0")/scripts"          # or the skill's scripts/ path
 python -m pipeline.scan_cli init   --workdir <scan-root>
-python -m pipeline.scan_cli run    --workdir <scan-root> [--profile quick|full|audit] [--full]
+python -m pipeline.scan_cli run    --workdir <scan-root> [--profile quick|full|audit] [--full] [-q|-v]
 python -m pipeline.scan_cli status --workdir <scan-root>
 python -m pipeline.scan_cli report --workdir <scan-root> [--repo <name>]
 ```
@@ -69,6 +70,23 @@ python -m pipeline.scan_cli report --workdir <scan-root> [--repo <name>]
 If the package is installed globally the same surface is `secscan run ...`.
 
 Exit code 3 from `run` means your reasoning is required — see the next section.
+
+`run` reports progress on **stderr** as it works (each stage, segment `i/N`,
+external tool, and coverage note, plus a heartbeat during long steps); relay it to
+the user so a long scan does not look stuck. The summary stays on **stdout**. The
+full trace of the latest run is always in `.secscan/scan.log` — read it first when a
+scan stopped unexpectedly (its last line names the stage that was in progress).
+Pass `-q` if you only want the summary.
+
+When the project is configured with an external analysis endpoint (`llm.endpoint`),
+you do not perform the reasoning; the provider does, through its **batch API by
+default**. Expect `batch k/m submitted` / `processing c/N` / `ended` lines and a wait
+in the foreground that can last minutes to hours. Do not kill and restart the scan to
+"speed it up": the batch reference is persisted and a re-run resumes the same batch.
+Exit code 1 with `re-run to resume` on stderr means the endpoint kept refusing after
+all retries (typically rate limiting); segments already analysed are kept, so re-run
+later rather than starting over. `--policy interactive` opts into live per-segment
+requests for small repositories.
 
 ## Your part: segment analysis (step 6)
 
@@ -97,7 +115,38 @@ pipeline will build a larger packet (next escalation level) and ask again.
 Because requests and responses are files, a large scan can span **multiple agent
 sessions**: answer what you can, re-run, repeat.
 
-## Your part: system review (step 10)
+## Your part: finding triage (step 10)
+
+After findings are correlated, the driver re-examines each candidate finding by
+handing it back to you: the scan again exits with status 3 and leaves
+`triage-SEC-NNNN` request files in `.secscan/handoff/requests/`. For each:
+
+1. Read the request — it carries the finalized `finding`, its redacted
+   `excerpt`, and `candidate_controls` the deterministic scan flagged as possibly
+   relevant (security-config registrations, route maps, integrity helpers, the
+   finding's own traced path).
+2. Follow `prompts/triage_finding.md`: answer from the closed verdict vocabulary
+   — `confirmed`, `downgraded`, `refuted`, or `flagged` — conforming to
+   `schemas/triage_answer.json`.
+3. You may open repository files listed in `consultable_files` to confirm the
+   structure your verdict relies on; files outside that list are off-limits (they
+   may contain credential values you must never see — the pipeline classifies
+   this deterministically, it is not asking for restraint).
+4. Every `refuted` or `downgraded` verdict MUST cite exact text (`pattern`)
+   within cited lines of a real file; the pipeline re-verifies each citation
+   mechanically before the verdict counts. An unverifiable citation degrades the
+   verdict to a flag — the finding is never removed on your say-so alone.
+5. Credential findings (CWE-798/522) can never be refuted: you cannot see the
+   matched value. Downgrade from context or flag with a question instead.
+6. Write the verdict JSON to `.secscan/handoff/responses/<request-id>.json`;
+   re-run the scan command to continue.
+
+Findings you flag land in the report's **Awaiting Verification** section with
+your question. The operator answers by recording
+`.secscan/triage/declarations.json` entries; the next scan applies them as
+user-declared evidence (reversible — removing the entry restores the flag).
+
+## Your part: system review (step 11)
 
 Read `.secscan/findings/correlated.json`, `workspace.json`, and
 `code-graph.json` — **not** the source. Look for vulnerabilities that span

@@ -17,8 +17,10 @@ from __future__ import annotations
 import shutil
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 
 from pipeline.tooling.discover import Availability, probe_version
+from pipeline.tooling.locate import resolve_executable, resolved_argv
 from pipeline.tooling.registry import ToolEntry
 
 _INSTALL_TIMEOUT_S = 300
@@ -53,12 +55,32 @@ def resolve_selection(spec: str, missing: list[Availability]) -> set[str]:
     return out
 
 
-def install_tool(entry: ToolEntry) -> ProvisionResult:
-    """Install one tool via its first usable channel. Never raises."""
+def usable_channel(entry: ToolEntry) -> dict | None:
+    """First registry channel whose manager is on PATH, or ``None``."""
     for channel in entry.provision_channels:
         manager = str(channel.get("manager") or "")
-        if not manager or shutil.which(manager) is None:
-            continue
+        if manager and shutil.which(manager) is not None:
+            return channel
+    return None
+
+
+def declared_managers(entry: ToolEntry) -> list[str]:
+    """Package managers the registry knows how to install this tool with."""
+    return [str(c.get("manager")) for c in entry.provision_channels if c.get("manager")]
+
+
+def not_installable_reason(entry: ToolEntry) -> str:
+    """Honest, deterministic reason a tool cannot be provisioned here."""
+    managers = declared_managers(entry)
+    needs = f" (needs one of: {', '.join(managers)})" if managers else ""
+    return f"no usable install channel on this machine{needs}"
+
+
+def install_tool(entry: ToolEntry) -> ProvisionResult:
+    """Install one tool via its first usable channel. Never raises."""
+    channel = usable_channel(entry)
+    if channel is not None:
+        manager = str(channel["manager"])
         argv = [str(arg) for arg in channel.get("argv") or []]
         try:
             proc = subprocess.run(  # noqa: S603 - registry-declared fixed argv
@@ -78,20 +100,25 @@ def install_tool(entry: ToolEntry) -> ProvisionResult:
             return ProvisionResult(
                 entry.id, False, f"'{manager}' install exited {proc.returncode}"
             )
-        # verify, don't trust: the tool must now resolve and answer its probe
-        if entry.system_executable and shutil.which(entry.system_executable) is None:
+        # verify, don't trust: the tool must now resolve (PATH or the Go bin
+        # dir — `go install` lands outside PATH by default) and answer its probe
+        resolved = resolve_executable(entry.system_executable) if entry.system_executable else ""
+        if entry.system_executable and resolved is None:
             return ProvisionResult(
                 entry.id,
                 False,
-                f"installed via {manager} but '{entry.system_executable}' still not on PATH",
+                f"installed via {manager} but '{entry.system_executable}' still not found",
             )
+        detail = f"installed via {manager}"
+        if resolved and shutil.which(entry.system_executable) is None:
+            detail += f" into {Path(resolved).parent} (not on PATH; secscan resolves it directly)"
         return ProvisionResult(
             entry.id,
             True,
-            f"installed via {manager}",
-            version=probe_version(entry.version_probe),
+            detail,
+            version=probe_version(tuple(resolved_argv(entry.version_probe))),
         )
-    return ProvisionResult(entry.id, False, "no usable install channel on this machine")
+    return ProvisionResult(entry.id, False, not_installable_reason(entry))
 
 
 def install_selected(

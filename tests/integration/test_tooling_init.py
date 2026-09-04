@@ -196,6 +196,138 @@ def test_failed_installation_is_reported_not_fatal(tmp_path, monkeypatch) -> Non
     assert report.ready
 
 
+def test_failure_reason_is_rendered_alongside_decision(tmp_path, monkeypatch) -> None:
+    """A tried-and-failed install must read differently from a declined one."""
+    root = copy_fixture("multi_eco", tmp_path)
+    bin_dir = tmp_path / "brew-bin"
+    install_brew_shim(bin_dir, mapping=RECORDED)
+    monkeypatch.setenv("SECSCAN_SHIM_BREW_FAIL", "1")
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+    report = run_init(root, environ={}, yes=True)
+
+    rendered = report.render()
+    assert "missing-declared: 'brew' install exited 1" in rendered
+
+
+def test_uninstallable_tools_are_declared_and_never_offered(tmp_path, monkeypatch) -> None:
+    """No package manager on this machine ⇒ nothing to consent to: the tools
+    are declared missing with the reason, the prompt never fires, and the
+    reason is visible in the rendered report."""
+    root = copy_fixture("multi_eco", tmp_path)
+    empty_bin = tmp_path / "empty-bin"
+    empty_bin.mkdir()
+    monkeypatch.setenv("PATH", str(empty_bin))
+
+    prompts: list[str] = []
+    echoed: list[str] = []
+    report = run_init(
+        root,
+        environ={},
+        prompt=lambda text: (prompts.append(text), "all")[1],
+        echo=echoed.append,
+    )
+
+    assert not prompts, f"nothing installable, yet init prompted: {prompts}"
+    assert report.install_plan == []
+    records = _tooling(report)
+    assert records and all(r["source"] == "missing" for r in records.values())
+    assert all(r["decision"] == "missing-declared" for r in records.values())
+    assert records["trivy"]["detail"] == (
+        "no usable install channel on this machine (needs one of: brew)"
+    )
+    assert records["gitleaks"]["detail"].endswith("(needs one of: brew, go)")
+    # the user is told why the list is empty, and the report carries the reason
+    assert any("Not installable on this machine" in line for line in echoed)
+    assert "missing-declared: no usable install channel" in report.render()
+    # the persisted artifact carries the same honest reason
+    assert _availability(root)["trivy"]["detail"] == records["trivy"]["detail"]
+    assert report.ready
+
+
+def test_uninstallable_subset_is_filtered_from_offer(tmp_path, monkeypatch) -> None:
+    """Only tools this machine can install are listed; the rest are declared."""
+    root = copy_fixture("multi_eco", tmp_path)
+    bin_dir = tmp_path / "brew-bin"
+    # brew shim only knows these formulas: trivy/gitleaks/ODC have no channel here
+    install_brew_shim(
+        bin_dir, mapping=RECORDED, formulas={"node": "npm", "osv-scanner": "osv-scanner"},
+    )
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+    def fake_channel(entry):
+        return {"manager": "brew"} if entry.id in {"npm-audit", "osv-scanner"} else None
+
+    monkeypatch.setattr(provision, "usable_channel", fake_channel)
+    report = run_init(root, environ={}, prompt=lambda _t: "none")
+
+    listed = "\n".join(report.install_plan)
+    assert "npm-audit" in listed and "osv-scanner" in listed
+    assert "trivy" not in listed and "gitleaks" not in listed
+    records = _tooling(report)
+    assert records["trivy"]["decision"] == "missing-declared"
+    assert records["osv-scanner"]["decision"] == "skipped-by-user"
+
+
+def _install_go_shim(bin_dir: Path, go_bin: Path, mapping: dict[str, str]) -> Path:
+    """Fake ``go``: ``go install <module>@latest`` materializes the tool shim
+    in ``go_bin`` (never on PATH), mirroring the real toolchain's behaviour."""
+    from tests.helpers.tool_shims import RECORDED_DIR, _script_for
+
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    go_bin.mkdir(parents=True, exist_ok=True)
+    cases = []
+    for exe, recorded in sorted(mapping.items()):
+        inner = _script_for(exe, RECORDED_DIR / recorded, "7.7.7-gofixture")
+        cases.append(
+            f"  *{exe}*)\n"
+            f"    /bin/cat > \"{go_bin}/{exe}\" <<'SHIM_EOF'\n{inner}SHIM_EOF\n"
+            f"    /bin/chmod +x \"{go_bin}/{exe}\" ;;"
+        )
+    script = (
+        "#!/bin/sh\n"
+        'if [ "$1" = "env" ]; then echo ""; echo "' + str(go_bin.parent) + '"; exit 0; fi\n'
+        'case "$2" in\n' + "\n".join(cases) + "\n  *) exit 1 ;;\nesac\n"
+    )
+    go = bin_dir / "go"
+    go.write_text(script)
+    go.chmod(0o755)
+    return bin_dir
+
+
+def test_go_channel_install_lands_off_path_and_is_still_found(tmp_path, monkeypatch) -> None:
+    """`go install` drops binaries in $GOPATH/bin, which is not on PATH; the
+    install must verify against that directory and record the tool usable."""
+    root = copy_fixture("multi_eco", tmp_path)
+    bin_dir = tmp_path / "go-only-bin"
+    go_bin = tmp_path / "gopath" / "bin"
+    _install_go_shim(
+        bin_dir, go_bin, {"gitleaks": "gitleaks.json", "osv-scanner": "osv_crosscheck.json"},
+    )
+    monkeypatch.setenv("PATH", str(bin_dir))  # brew absent, go present, GOPATH/bin NOT on PATH
+    from pipeline.tooling import locate
+
+    locate._go_env_bin_dir.cache_clear()
+
+    report = run_init(root, environ={}, install="gitleaks,osv-scanner")
+
+    records = _tooling(report)
+    assert (go_bin / "gitleaks").exists() and (go_bin / "osv-scanner").exists()
+    for tool in ("gitleaks", "osv-scanner"):
+        assert records[tool]["decision"] == "installed", records[tool]
+        assert records[tool]["version"] == "7.7.7-gofixture"
+        assert "not on PATH" in records[tool]["detail"]
+    # brew-only tools were never offered
+    assert "trivy" not in "\n".join(report.install_plan)
+    assert records["trivy"]["decision"] == "missing-declared"
+
+    # a later init (fresh discovery) sees them as installed, no re-install
+    rerun = run_init(root, environ={}, no_input=True)
+    assert _tooling(rerun)["gitleaks"]["decision"] == "use"
+    assert _tooling(rerun)["gitleaks"]["source"] == "system-installed"
+    assert _tooling(rerun)["gitleaks"]["invocation"] == str(go_bin / "gitleaks")
+
+
 # =============================================================== feature 009
 # US1: NVD_API_KEY presence handling at init time (spec 009, FR-001..FR-007).
 
@@ -457,3 +589,28 @@ def test_blanket_consent_keyless_filters_nvd_tool_unless_flagged(tmp_path, monke
         _tooling(plain)["owasp-dependency-check"]["credential"]["state"]
         == "skipped-no-key"
     )
+
+
+# ----------------------------------------------------------- feature 012 (T051)
+
+
+def test_init_reports_default_batch_policy_for_endpoint_config(tmp_path, monkeypatch) -> None:
+    """FR-023: the resolved policy is stated, including that batch was defaulted."""
+    import yaml
+
+    from config.loader import default_config_yaml
+
+    root = copy_fixture("multi_eco", tmp_path)
+    scan_dir = root / ".secscan"
+    scan_dir.mkdir(exist_ok=True)
+    raw = yaml.safe_load(default_config_yaml())
+    raw["llm"]["endpoint"] = {
+        "provider": "anthropic",
+        "api_key_env": "INIT_FAKE_KEY",
+        "model_map": {"local": "m", "segment": "m"},
+    }
+    (scan_dir / "config.yaml").write_text(yaml.safe_dump(raw, sort_keys=False))
+    monkeypatch.setenv("PATH", str(install_shims(root.parent, dict(RECORDED))))
+    report = run_init(root, environ={"INIT_FAKE_KEY": "sk-fake"}, no_input=True)
+    assert report.execution_mode == "endpoint-batch (default policy)"
+    assert "Analysis will run in: endpoint-batch (default policy)" in report.render()

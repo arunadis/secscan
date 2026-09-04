@@ -42,7 +42,7 @@ class MissingCredential(RuntimeError):
 
 #: Capabilities that require a direct provider relationship.
 ENDPOINT_ONLY_FEATURES = {
-    "batch-api": "provider batch API submission (~50% cost discount)",
+    "batch-api": "provider batch API submission (published 50% discount)",
     "offpeak-scheduling": "off-peak window scheduling",
     "model-tiering": "per-analysis-level provider model tiers",
 }
@@ -57,10 +57,25 @@ class Resolution:
     model_map: dict[str, str] = field(default_factory=dict)
     unavailable_features: tuple[str, ...] = ()
     api_key_env: str | None = None
+    provider: str = "anthropic"
+    base_url: str | None = None
+    #: ``default`` when the batch policy was chosen by ``mode: auto`` rather than by the
+    #: operator, so the choice is never silent (feature 012, FR-023).
+    policy_source: str = "explicit"
+    batch_window_hours: float = 24.0
+    retry_attempts: int = 5
+    retry_max_wait_s: int = 60
+    offpeak_window: str | None = None
 
     @property
     def batch(self) -> bool:
         return self.mode is ExecutionMode.ENDPOINT_BATCH
+
+    @property
+    def mode_label(self) -> str:
+        """Mode value with the default-policy marker, for headers and reports."""
+        suffix = " (default policy)" if self.policy_source == "default" else ""
+        return f"{self.mode.value}{suffix}"
 
     def tier_for(self, level: str) -> str:
         """Model identifier for an analysis level (``local``/``segment``/``system``)."""
@@ -69,7 +84,7 @@ class Resolution:
         return self.model_map.get(level) or self.model_map.get("segment") or "endpoint-default"
 
     def describe(self) -> str:
-        lines = [f"Execution mode: {self.mode.value} ({self.reason})"]
+        lines = [f"Execution mode: {self.mode_label} ({self.reason})"]
         if self.unavailable_features:
             lines.append("Unavailable in this mode:")
             lines.extend(f"  - {feature}" for feature in self.unavailable_features)
@@ -100,13 +115,34 @@ def resolve(config: Config, environ: dict[str, str] | None = None) -> Resolution
     if api_key_env and not env.get(api_key_env):
         raise MissingCredential(api_key_env)
 
-    batch = config.batch_enabled or config.execution_mode == "batch-offpeak"
+    # Resolution table: contracts/batch-execution.md §1 (feature 012).
+    policy_mode = config.execution_mode
+    enabled = config.batch_enabled_explicit
+    source = "explicit"
+    if enabled is not None:
+        batch = enabled
+    elif policy_mode in ("batch", "batch-offpeak"):
+        batch = True
+    elif policy_mode == "interactive":
+        batch = False
+    else:  # auto
+        batch = True
+        source = "default"
     mode = ExecutionMode.ENDPOINT_BATCH if batch else ExecutionMode.ENDPOINT_INTERACTIVE
+    provider = str(endpoint.get("provider") or "anthropic")
+    base_url = endpoint.get("base_url")
     return Resolution(
         mode=mode,
-        reason=f"external endpoint configured (provider={endpoint.get('provider', 'anthropic')})",
+        reason=f"external endpoint configured (provider={provider})",
         model_map={k: str(v) for k, v in (endpoint.get("model_map") or {}).items()},
         api_key_env=api_key_env or None,
+        provider=provider,
+        base_url=str(base_url).rstrip("/") if base_url else None,
+        policy_source=source,
+        batch_window_hours=config.batch_window_hours,
+        retry_attempts=config.retry_attempts,
+        retry_max_wait_s=config.retry_max_wait_s,
+        offpeak_window=config.offpeak_window if policy_mode == "batch-offpeak" else None,
     )
 
 

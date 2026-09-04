@@ -37,6 +37,9 @@ class AnalysisDepth:
     max_escalation_level: int
     ingest_scanners: bool = True
     system_review: bool = True
+    #: Whether the finding-triage round runs (feature 013); custom profiles that
+    #: omit the key keep their previous behavior (no triage).
+    finding_triage: bool = False
 
     @property
     def all_domains(self) -> bool:
@@ -48,6 +51,7 @@ class AnalysisDepth:
             "max_escalation_level": self.max_escalation_level,
             "ingest_scanners": self.ingest_scanners,
             "system_review": self.system_review,
+            "finding_triage": self.finding_triage,
         }
 
 
@@ -115,7 +119,10 @@ class ScanProfile:
         """Identity of the analysis depth, used to detect shallow->deep switches."""
         depth = self.analysis_depth
         domains = "all" if depth.all_domains else ",".join(sorted(depth.domains))
-        return f"{domains}|L{depth.max_escalation_level}|sys={int(depth.system_review)}"
+        return (
+            f"{domains}|L{depth.max_escalation_level}|sys={int(depth.system_review)}"
+            f"|triage={int(depth.finding_triage)}"
+        )
 
 
 def _resolve_domains(raw: Any) -> tuple[str, ...]:
@@ -215,6 +222,7 @@ def resolve(
             max_escalation_level=level,
             ingest_scanners=bool(depth_raw.get("ingest_scanners", True)),
             system_review=bool(depth_raw.get("system_review", True)),
+            finding_triage=bool(depth_raw.get("finding_triage", False)),
         ),
         report_thresholds=ReportThresholds(
             min_severity_band=band,

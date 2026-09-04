@@ -1,0 +1,13 @@
+{
+  "case_id": "finding-triage",
+  "kind": "seeded-workspace",
+  "target": "tests/fixtures/triage_targets.build_repo",
+  "source_of_truth": "seeded at fixture construction; mirroring the manual audit of scan 20260903T042832Z-c63749 (8 real / 21 false positives / 16 context-dependent)",
+  "expectations": [
+    {
+      "defect_class": "triage-correctness",
+      "assertion": "expected-refuted cases are refuted with verified citations; expected-flagged cases carry a question; must-survive cases keep their grading; credential-class findings are never refuted",
+      "baseline": "manual audit 2026-09-04 of scan 20260903T042832Z-c63749; corpus in cases/triage_ground_truth.json"
+    }
+  ]
+}

@@ -214,6 +214,7 @@ def build_report(
     findings: list[dict[str, Any]],
     usage: UsageTracker,
     segments_analyzed: int,
+    policy_source: str = "explicit",
     coverage_gaps: list[str] | None = None,
     unavailable_features: list[str] | None = None,
     attack_paths: list[dict[str, Any]] | None = None,
@@ -226,6 +227,7 @@ def build_report(
     tool_limitations: list[dict[str, Any]] | None = None,
     suppressions: list[dict[str, Any]] | None = None,
     scan_root: Any | None = None,
+    triage_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     reported = admitted(findings, profile)
     for finding in reported:
@@ -278,11 +280,48 @@ def build_report(
         )
     if workspace.get("unavailable_members"):
         coverage["unavailable_members"] = list(workspace["unavailable_members"])
+    if triage_summary is not None:
+        # Feature 013 (FR-006/FR-009): methodology note — the consultation
+        # boundary in effect and how many candidates were adjudicated.
+        coverage["triage"] = triage_summary
+
+    # Feature 013 (FR-012): flagged findings render in a distinct section with
+    # their open question — derived from ALL correlated findings (not only the
+    # threshold-admitted ones), so a low-severity flag is never lost.
+    awaiting = [
+        {
+            "finding_id": f["id"],
+            "location": {
+                "repo": (f.get("location") or {}).get("repo", ""),
+                "file": (f.get("location") or {}).get("file", ""),
+                **(
+                    {"symbol": f["location"]["symbol"]}
+                    if (f.get("location") or {}).get("symbol")
+                    else {}
+                ),
+            },
+            "question": f["awaiting_verification"]["question"],
+            **(
+                {
+                    "settling_evidence_hint": f["awaiting_verification"][
+                        "settling_evidence_hint"
+                    ]
+                }
+                if f["awaiting_verification"].get("settling_evidence_hint")
+                else {}
+            ),
+            "provenance": f["awaiting_verification"].get("provenance", "triage"),
+        }
+        for f in findings
+        if f.get("awaiting_verification")
+    ]
 
     report: dict[str, Any] = {
         "scan_id": scan_id,
         "workspace": {"id": workspace["id"], "members": members},
         "execution_mode": execution_mode,
+        # "default" when the batch policy came from `mode: auto` (feature 012, FR-023).
+        "execution_policy_source": policy_source,
         "profile": {"name": profile.name, "overrides": profile.overrides},
         "executive_summary": _executive_summary(reported, grouped, members, profile, system_review),
         "findings_by_band": grouped,
@@ -292,6 +331,8 @@ def build_report(
     }
     if suppressions:
         report["suppressions"] = report_suppressions
+    if awaiting:
+        report["awaiting_verification"] = sorted(awaiting, key=lambda a: a["finding_id"])
     cross = cross_system_ids(reported)
     if cross:
         report["cross_system_findings"] = cross
@@ -403,6 +444,12 @@ def _render_excerpt_markdown(add, finding: dict[str, Any]) -> None:
     add("")
 
 
+def mode_label(report: dict[str, Any]) -> str:
+    """Execution mode plus the default-policy marker (feature 012, FR-023)."""
+    suffix = " (default policy)" if report.get("execution_policy_source") == "default" else ""
+    return f"{report['execution_mode']}{suffix}"
+
+
 def render_markdown(report: dict[str, Any], system_review: str = "") -> str:
     lines: list[str] = []
     add = lines.append
@@ -410,7 +457,7 @@ def render_markdown(report: dict[str, Any], system_review: str = "") -> str:
     add(f"# Security Report — {report['workspace']['id']}")
     add("")
     add(f"**Scan**: `{report['scan_id']}`  ")
-    add(f"**Execution mode**: {report['execution_mode']}  ")
+    add(f"**Execution mode**: {mode_label(report)}  ")
     profile = report["profile"]
     overrides = f" (overrides: {profile['overrides']})" if profile.get("overrides") else ""
     add(f"**Profile**: {profile['name']}{overrides}  ")
@@ -472,6 +519,25 @@ def render_markdown(report: dict[str, Any], system_review: str = "") -> str:
             add(f"- {item}")
         add("")
 
+    if report.get("awaiting_verification"):
+        add(f"## Awaiting Verification ({len(report['awaiting_verification'])})")
+        add("")
+        add(
+            "The triage round could not settle these findings from repository "
+            "evidence alone; each carries the concrete question that would settle "
+            "it. They remain in the findings above, graded by what was proven. "
+            "Answer a question in `.secscan/triage/declarations.json` and re-run "
+            "the scan to resolve it."
+        )
+        add("")
+        for item in report["awaiting_verification"]:
+            location = item.get("location") or {}
+            add(f"- **{item['finding_id']}** (`{location.get('repo')}:{location.get('file')}`)")
+            add(f"  - Question: {item['question']}")
+            if item.get("settling_evidence_hint"):
+                add(f"  - Settling evidence: {item['settling_evidence_hint']}")
+        add("")
+
     coverage = report["coverage"]
     add("## Coverage")
     add("")
@@ -500,6 +566,17 @@ def render_markdown(report: dict[str, Any], system_review: str = "") -> str:
         add(line)
     for gap in coverage.get("blocking_gaps", []):
         add(f"- Blocking gap: {gap}")
+    triage_cov = coverage.get("triage")
+    if triage_cov is not None:
+        if triage_cov.get("enabled"):
+            add(
+                "- Finding triage: ran "
+                f"({triage_cov.get('candidates', 0)} candidates, "
+                f"{triage_cov.get('adjudicated', 0)} adjudicated); "
+                f"{triage_cov.get('mode_note', '')}".rstrip()
+            )
+        else:
+            add("- Finding triage: disabled (profile/config)")
     for limitation in coverage.get("tool_limitations", []):
         # External tooling the report implicitly lacks (feature 008, FR-009).
         add(
@@ -579,6 +656,24 @@ def _render_finding(add, finding: dict[str, Any]) -> None:
         )
     )
     add(f"- **Location**: `{location['repo']}` → `{where}`")
+    triage_block = finding.get("triage")
+    if triage_block:
+        previous = triage_block.get("previous_severity")
+        change = (
+            f" (was {previous})"
+            if triage_block.get("verdict") == "downgraded" and previous is not None
+            else ""
+        )
+        provenance = (
+            " — resolved from a user-declared answer"
+            if triage_block.get("user_declaration")
+            else ""
+        )
+        add(f"- **Triage**: {triage_block['verdict']}{change}{provenance}")
+    if finding.get("awaiting_verification"):
+        add(f"- **Awaiting verification**: {finding['awaiting_verification']['question']}")
+    if finding.get("triage_unresolved"):
+        add(f"- **Triage incomplete**: {finding['triage_unresolved']['reason']}")
     if finding.get("compliance_refs"):
         add(f"- **Compliance**: {', '.join(finding['compliance_refs'])}")
     if finding.get("tool_ref"):
@@ -663,6 +758,7 @@ def main() -> None:  # pragma: no cover - CLI wrapper
         scan_id=store.scan_id,
         workspace=workspace,
         execution_mode=resolution.mode.value,
+        policy_source=resolution.policy_source,
         profile=profile,
         findings=correlated,
         usage=usage,

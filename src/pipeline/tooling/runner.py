@@ -23,10 +23,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pipeline import resources
 from pipeline.audits import offline as audits_offline
 from pipeline.state import is_skipped_dir, iter_source_files
 from pipeline.tooling import tool_dir
 from pipeline.tooling.discover import probe_version
+from pipeline.tooling.locate import resolved_argv
 from pipeline.tooling.registry import ToolEntry
 from pipeline.tooling.state import write_run_records
 
@@ -143,6 +145,7 @@ def run_tool(
         "out_dir": str(out_dir),
         "out_file": str(out_dir / "report.json"),
         "data_dir": str(tool_dir() / "data"),
+        "payload_data": str(resources.data_dir()),
         "wrapper": project_invocation or entry.system_executable,
     }
     argv = render_argv(list(invoke.get("argv") or []), mapping)
@@ -151,12 +154,16 @@ def run_tool(
     if project_invocation and not entry.invoke_project:
         # project-provided binary from manifest-dep/bin-path discovery: swap argv0
         argv = [project_invocation, *argv[1:]]
+    elif not argv[0].startswith("./"):
+        # system tool: PATH, else the Go bin dir (`go install` target) — argv0
+        # becomes the absolute path only when PATH alone cannot resolve it
+        argv = resolved_argv(argv)
 
     run = ToolRun(
         entry.id,
         STATUS_FAILED,
         invocation=" ".join(argv),
-        tool_version=probe_version(entry.version_probe),
+        tool_version=probe_version(tuple(resolved_argv(entry.version_probe))),
     )
 
     executable = argv[0].removeprefix("./")

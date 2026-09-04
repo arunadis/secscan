@@ -192,6 +192,25 @@ GOLDEN = {
 # -------------------------------------------------------------------- tests
 
 
+def test_usage_batch_share_fields_are_declared_additively() -> None:
+    """Feature 012 T020: the tracker's real output validates and the new fields are typed."""
+    from pipeline.usage import UsageTracker
+
+    usage = UsageTracker()
+    usage.record("segment_analysis", 100, 20, batch=True)
+    usage.record_fallback("seg-a-l1", "expired")
+    doc = usage.to_dict()
+    share = doc["batch_share"]
+    assert {"batch_input_tokens", "batch_output_tokens", "estimated_saving_percent",
+            "assumption"} <= set(share)
+    validate("usage", doc)
+    for field, bad in (("estimated_saving_percent", "lots"), ("batch_input_tokens", -1),
+                       ("assumption", 3)):
+        broken = copy.deepcopy(doc)
+        broken["batch_share"][field] = bad
+        assert not is_valid("usage", broken), field
+
+
 def test_every_schema_file_loads() -> None:
     names = sorted(p.stem for p in SCHEMA_DIR.glob("*.json"))
     assert names, "no schemas found"

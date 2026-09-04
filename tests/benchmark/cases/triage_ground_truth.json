@@ -1,0 +1,35 @@
+{
+  "feature": "013-finding-triage",
+  "corpus": "triage correctness ground truth",
+  "baseline": "manual audit of scan 20260903T042832Z-c63749: 8 real, 21 false positives, 16 context-dependent; the control-elsewhere classes below reproduce the disprovable patterns from that audit",
+  "entries": [
+    {
+      "id": "control-elsewhere-filter",
+      "annotation": "expect-refuted",
+      "fixture": "triage_targets.build_repo",
+      "answer": "REFUTING_ANSWER",
+      "rationale": "Baseline pattern (SEC-0011/SEC-0008 class): a controller finding disproved by a filter registered in security configuration elsewhere in the repository."
+    },
+    {
+      "id": "fabricated-control",
+      "annotation": "expect-flagged",
+      "fixture": "triage_targets.build_repo",
+      "answer": "FABRICATED_REFUTAL",
+      "rationale": "A refutation whose cited control does not exist MUST NOT suppress; citation re-verification degrades it to a flag (FR-007)."
+    },
+    {
+      "id": "dev-local-credential",
+      "annotation": "expect-flagged",
+      "fixture": "triage_targets.build_repo",
+      "answer": "DEV_TOKEN_FLAG",
+      "rationale": "Baseline pattern (SEC-0141/SEC-0029 class): a localhost-only dev credential is context-dependent — the answer is a question for the operator, never a refutation (FR-008)."
+    },
+    {
+      "id": "genuine-credential-survives",
+      "annotation": "must-survive",
+      "fixture": "triage_targets.build_repo",
+      "answer": "REFUTING_ANSWER",
+      "rationale": "Zero true positives lost (SC-002): the deterministic credential finding must survive a refutation aimed at the code finding, and credential-class refutation is structurally impossible."
+    }
+  ]
+}

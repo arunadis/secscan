@@ -10,6 +10,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+#: Labelled in every rendering so the saving figure is never read as a measurement.
+SAVING_ASSUMPTION = "provider's published 50% batch discount"
+
 
 def _bucket() -> dict[str, int]:
     return {"input_tokens": 0, "output_tokens": 0, "invocations": 0}
@@ -25,6 +28,9 @@ class UsageTracker:
     by_escalation_level: dict[str, int] = field(default_factory=dict)
     batch_invocations: int = 0
     interactive_invocations: int = 0
+    #: Tokens answered through the provider batch facility (feature 012, FR-013).
+    batch_input_tokens: int = 0
+    batch_output_tokens: int = 0
     fallbacks: int = 0
     fallback_log: list[dict[str, str]] = field(default_factory=list)
     #: Sum of the context each invocation *would* have used under a naive
@@ -58,6 +64,8 @@ class UsageTracker:
 
         if batch:
             self.batch_invocations += 1
+            self.batch_input_tokens += input_tokens
+            self.batch_output_tokens += output_tokens
         else:
             self.interactive_invocations += 1
 
@@ -76,6 +84,18 @@ class UsageTracker:
             return 0.0
         return round(self.baseline_input_tokens / self.total_input_tokens, 2)
 
+    @property
+    def estimated_saving_percent(self) -> float:
+        """Token-based estimate assuming the published batch discount (FR-013).
+
+        ``50% x (tokens answered via batch / all analysis tokens)``; no price table.
+        """
+        total = self.total_input_tokens + self.total_output_tokens
+        if total == 0:
+            return 0.0
+        batch = self.batch_input_tokens + self.batch_output_tokens
+        return round(50.0 * batch / total, 1)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "total_input_tokens": self.total_input_tokens,
@@ -88,6 +108,10 @@ class UsageTracker:
                 "batch_invocations": self.batch_invocations,
                 "interactive_invocations": self.interactive_invocations,
                 "fallbacks": self.fallbacks,
+                "batch_input_tokens": self.batch_input_tokens,
+                "batch_output_tokens": self.batch_output_tokens,
+                "estimated_saving_percent": self.estimated_saving_percent,
+                "assumption": SAVING_ASSUMPTION,
             },
             "fallback_log": list(self.fallback_log),
             "baseline_comparison": {
@@ -110,6 +134,8 @@ class UsageTracker:
             by_escalation_level=dict(raw.get("by_escalation_level") or {}),
             batch_invocations=int(share.get("batch_invocations", 0)),
             interactive_invocations=int(share.get("interactive_invocations", 0)),
+            batch_input_tokens=int(share.get("batch_input_tokens", 0)),
+            batch_output_tokens=int(share.get("batch_output_tokens", 0)),
             fallbacks=int(share.get("fallbacks", 0)),
             fallback_log=list(raw.get("fallback_log") or []),
             baseline_input_tokens=int(baseline.get("maximal_context_tokens", 0)),
@@ -124,6 +150,8 @@ class UsageTracker:
             f"| Output tokens | {self.total_output_tokens:,} |",
             f"| Batch / interactive | {self.batch_invocations} / {self.interactive_invocations} |",
             f"| Batch fallbacks | {self.fallbacks} |",
+            f"| Estimated saving vs interactive pricing | {self.estimated_saving_percent}% "
+            f"(assumes the {SAVING_ASSUMPTION}) |",
             f"| Savings vs maximal-context baseline | {self.savings_factor}x |",
         ]
         if self.by_escalation_level:

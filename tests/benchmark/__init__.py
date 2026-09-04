@@ -40,6 +40,7 @@ DEFECT_CLASSES = (
     "missed-detection",
     "llm-detection",
     "supply-chain-detection",
+    "triage-correctness",
 )
 
 KINDS = ("reviewed-real", "seeded-workspace")
@@ -51,6 +52,7 @@ NON_CASE_FILES = (
     "baseline_usage.json",
     "audited_credential_baseline.json",
     "must_find.json",
+    "triage_ground_truth.json",
 )
 
 

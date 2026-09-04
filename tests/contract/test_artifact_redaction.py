@@ -26,8 +26,10 @@ from typing import Any
 
 import pytest
 
+from pipeline import progress
 from pipeline import run as run_mod
 from pipeline.redact import BLOCKED, Redactor
+from pipeline.state import LOG_FILE_NAME
 from tests.fixtures.single_repo_shop import FIXTURE
 from tests.integration.conftest import oracle_responder, write_config
 
@@ -43,8 +45,57 @@ SEEDED_SECRETS: tuple[str, ...] = ("Pr0d-Sh0p-DB-2024!",)
 def scanned(tmp_path_factory) -> Path:
     root = FIXTURE.write(tmp_path_factory.mktemp("redaction-sweep"))
     write_config(root)
-    run_mod.run_scan(root, responder=oracle_responder, full=True)
+    # Feature 011: the progress trace is an output too, so the scan is driven with
+    # a (quiet) reporter and its scan.log is swept like every other file.
+    reporter = progress.build_reporter(
+        progress.OutputLevel.QUIET, log_path=root / ".secscan" / LOG_FILE_NAME
+    )
+    try:
+        run_mod.run_scan(root, responder=oracle_responder, full=True, progress=reporter)
+    finally:
+        reporter.close()
     return root
+
+
+@pytest.fixture(scope="module")
+def scanned_batch(tmp_path_factory, monkeypatch_module) -> Path:
+    """The same fixture scanned under the batch policy against the fake provider (012)."""
+    from tests.helpers.fake_provider import FakeProvider
+
+    monkeypatch_module.setenv("REDACTION_SWEEP_KEY", "sk-fake")
+    root = FIXTURE.write(tmp_path_factory.mktemp("redaction-sweep-batch"))
+    write_config(
+        root,
+        {
+            "llm": {
+                "endpoint": {
+                    "provider": "anthropic",
+                    "api_key_env": "REDACTION_SWEEP_KEY",
+                    "model_map": {"local": "m-local", "segment": "m-segment"},
+                }
+            }
+        },
+    )
+    reporter = progress.build_reporter(
+        progress.OutputLevel.QUIET, log_path=root / ".secscan" / LOG_FILE_NAME
+    )
+    try:
+        run_mod.run_scan(
+            root, transport=FakeProvider("anthropic"), full=True, progress=reporter,
+            clock=lambda: 1_700_000_000.0, sleep=lambda s: None,
+        )
+    finally:
+        reporter.close()
+    return root
+
+
+@pytest.fixture(scope="module")
+def monkeypatch_module():
+    from _pytest.monkeypatch import MonkeyPatch
+
+    patcher = MonkeyPatch()
+    yield patcher
+    patcher.undo()
 
 
 def _artifacts(root: Path) -> list[Path]:
@@ -52,8 +103,33 @@ def _artifacts(root: Path) -> list[Path]:
     return sorted(
         p
         for p in scan_dir.rglob("*")
-        if p.is_file() and p.suffix in (".json", ".md", ".html") and "__pycache__" not in p.parts
+        if p.is_file()
+        and (p.suffix in (".json", ".md", ".html") or p.name == LOG_FILE_NAME)
+        and "__pycache__" not in p.parts
     )
+
+
+def test_scan_log_is_seen_by_the_sweep(scanned: Path) -> None:
+    """Feature 011 (FR-015/SC-006): the progress trace is swept like any artifact."""
+    names = {p.name for p in _artifacts(scanned)}
+    assert LOG_FILE_NAME in names, "scan.log was not produced or not swept"
+
+
+def test_answers_and_ledger_are_seen_by_the_sweep(scanned_batch: Path) -> None:
+    """Feature 012 (SC-008): persisted answers and the batch ledger are outputs too."""
+    from pipeline.state import BATCH_LEDGER_META
+
+    artifacts = _artifacts(scanned_batch)
+    answers = [p for p in artifacts if p.parent.name == "answers"]
+    assert answers, "no persisted answers were produced or swept"
+    state = json.loads((scanned_batch / ".secscan" / "state.json").read_text())
+    ledger = json.dumps(state["meta"][BATCH_LEDGER_META])
+    assert ledger and "batch_" in ledger
+    redactor = Redactor([])
+    for text in [ledger] + [p.read_text() for p in answers]:
+        for secret in SEEDED_SECRETS:
+            assert secret not in text
+        assert not redactor.redact(text).hits, "redactor flagged batch state"
 
 
 def test_the_sweep_actually_sees_the_artifacts(scanned: Path) -> None:

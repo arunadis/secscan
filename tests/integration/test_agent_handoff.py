@@ -29,12 +29,33 @@ def _answer(requests_dir: Path, responses_dir: Path, limit: int | None = None) -
         if target.exists():
             continue
 
+        if request.get("stage") == "finding_triage":
+            # Feature 013: triage requests answer with the closed verdict
+            # vocabulary, not the findings shape segment requests use.
+            fid = request["context_packet"]["finding_id"]
+            target.write_text(json.dumps({"finding_id": fid, "verdict": "confirmed"}))
+            answered += 1
+            continue
+
         class _Shim:
             payload = request["context_packet"]
 
         target.write_text(oracle_responder(_Shim()))
         answered += 1
     return answered
+
+
+def _answer_until_done(root: Path) -> object:
+    """Run the handoff/answer loop to completion (feature 013 added a second,
+    post-analysis handoff round: triage questions follow segment questions)."""
+    handoff_dir = root / ".secscan" / "handoff"
+    for _ in range(4):
+        try:
+            return run_mod.run_scan(root)
+        except AgentHandoff:
+            answered = _answer(handoff_dir / "requests", handoff_dir / "responses")
+            assert answered > 0, "the loop must make progress"
+    raise AssertionError("scan did not complete after four answer rounds")
 
 
 def test_scan_without_responder_hands_off_and_writes_requests(configured_shop: Path) -> None:
@@ -72,8 +93,9 @@ def test_scan_resumes_from_agent_written_responses(configured_shop: Path) -> Non
     answered = _answer(handoff_dir / "requests", handoff_dir / "responses")
     assert answered > 0
 
-    # Re-run: no responder, answers come from disk.
-    result = run_mod.run_scan(configured_shop)
+    # Re-run: no responder, answers come from disk (and any triage round the
+    # full-profile scan adds is answered through the same loop).
+    result = _answer_until_done(configured_shop)
     assert result.reported_findings
     assert result.report["execution_mode"] == "agent-mediated"
     assert result.report_path.exists()
@@ -95,7 +117,7 @@ def test_partial_answers_keep_asking_for_the_rest(configured_shop: Path) -> None
     assert len(second.value.pending) < total
 
     _answer(handoff_dir / "requests", handoff_dir / "responses")
-    assert run_mod.run_scan(configured_shop).reported_findings
+    assert _answer_until_done(configured_shop).reported_findings
 
 
 def test_responder_bypasses_the_handoff(configured_shop: Path) -> None:

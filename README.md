@@ -49,7 +49,7 @@ secscan init /path/to/your/project --ai claude
 
 # scan
 cd /path/to/your/project
-secscan run --full
+secscan run --full             # progress on stderr; add -q for summary only
 secscan report                 # re-render from artifacts
 ```
 
@@ -58,9 +58,16 @@ secscan report                 # re-render from artifacts
 > `uv tool install .` as above, or activate the venv first
 > (`source .venv/bin/activate`), or prefix commands with `uv run`.
 
+> **Upgrading from a source checkout?** `uv tool install . --force` reuses the
+> cached wheel because the version number has not changed, so you keep running the
+> old code. Use `uv tool install . --force --reinstall --no-cache`, or
+> `uv tool install --editable . --force` for development. See
+> [Getting started → Upgrading](docs/getting-started.md#upgrading-a-source-install).
+
 **No API key is required.** By default the coding agent running the skill does the
 reasoning with its own model. Configuring an external endpoint is optional and
-unlocks batch/off-peak cost features.
+switches analysis to the provider's batch API (rate-limit-proof, provider batch
+pricing), with off-peak scheduling and per-level model tiers available on top.
 
 ### Supported agents
 
@@ -158,7 +165,7 @@ llm:
   #   api_key_env: ANTHROPIC_API_KEY   # variable NAME only — never the secret
 
 execution_policy:
-  mode: interactive               # interactive | batch-offpeak
+  mode: auto                      # auto | interactive | batch | batch-offpeak
   # offpeak_window: "02:00-06:00"
 
 budgets:
@@ -182,7 +189,7 @@ three modes:
 | Mode | Who analyzes | Needs a key | Endpoint-only cost features |
 |------|--------------|-------------|------------------------------|
 | `agent` | The coding agent running the skill, with its own model | No | Unavailable (declared at init) |
-| `endpoint` | A provider endpoint you configure | Yes (`api_key_env`) | Batch API (~50% cost discount), off-peak window scheduling, per-level model tiers |
+| `endpoint` | A provider endpoint you configure | Yes (`api_key_env`) | Provider batch API (the default; providers publish a 50% discount for it), off-peak window scheduling, per-level model tiers |
 | `auto` (default) | Endpoint when one is configured, otherwise the agent | Only with an endpoint | As above when an endpoint is configured |
 
 Explicit configuration always wins: setting `llm.endpoint` switches analysis to it even
@@ -193,17 +200,36 @@ bounded context packets become handoff files the agent answers (see
 
 #### Configuring an endpoint
 
+`provider` selects the wire protocol and **must match the key you supply**:
+
+| `provider` | Sends to | Auth header | Use for |
+|------------|----------|-------------|---------|
+| `anthropic` (default) | `{base_url}/v1/messages` (default `https://api.anthropic.com`) | `x-api-key` | Anthropic keys |
+| `openai-compatible` | `{base_url}/chat/completions` (default `https://api.openai.com/v1`) | `Authorization: Bearer` | OpenAI keys and any Chat-Completions gateway (Azure OpenAI, OpenRouter, LiteLLM, vLLM, internal proxies) |
+
 ```yaml
+# Anthropic
 llm:
   mode: endpoint
   endpoint:
-    provider: anthropic             # anthropic | openai-compatible
+    provider: anthropic
     api_key_env: ANTHROPIC_API_KEY  # variable NAME — the key itself is never in this file
-    # base_url: https://your-gateway # optional, for openai-compatible gateways
     model_map:                      # optional per-analysis-level model tiers
       local: claude-haiku-latest    # cheap tier: per-symbol/secret checks
       segment: claude-sonnet-latest # segment analysis (fallback tier for the others)
       system: claude-opus-latest    # cross-boundary system review
+```
+
+```yaml
+# OpenAI, or any OpenAI-compatible gateway
+llm:
+  mode: endpoint
+  endpoint:
+    provider: openai-compatible     # an OpenAI key under provider: anthropic => HTTP 401
+    api_key_env: OPENAI_API_KEY
+    # base_url: https://your-gateway/v1   # only for gateways; defaults to api.openai.com
+    model_map:
+      segment: gpt-4o
 ```
 
 - `api_key_env` is required whenever `endpoint` is present; if the variable is unset at
@@ -211,30 +237,38 @@ llm:
   value anywhere under `llm.endpoint` is rejected by validation outright, and the value
   is never logged or written to an artifact.
 - `model_map.segment` is the fallback tier: `local` and `system` default to it.
-- The bundled HTTP transport speaks the Anthropic Messages API (`POST /v1/messages`);
-  `provider: openai-compatible` and `base_url` are accepted by config validation for
-  provider-agnostic gateway deployments.
+- Getting `HTTP Error 401`? The message names the provider and URL that was called —
+  almost always the provider does not match the key, or the variable is not exported in
+  the shell running `secscan`. Full checklist in
+  [Configuration → Troubleshooting](docs/configuration.md#troubleshooting-http-error-401).
 
-#### Endpoint scheduling: interactive vs batch
+#### Endpoint scheduling: batch (default) vs interactive
 
-With an endpoint configured, `execution_policy` picks how analysis is submitted:
+With an endpoint configured, analysis is submitted through the provider's **batch
+API by default**: each escalation round becomes one submission instead of one live
+request per segment, which removes the per-minute rate-limit failure mode on large
+repositories and is billed at the providers' published 50% batch discount.
 
 ```yaml
 execution_policy:
-  mode: interactive                 # interactive | batch-offpeak
-  offpeak_window: "02:00-06:00"     # REQUIRED when mode is batch-offpeak
+  mode: auto                        # auto | interactive | batch | batch-offpeak
+  # offpeak_window: "02:00-06:00"   # REQUIRED when mode is batch-offpeak
   batch:
-    enabled: false                  # true = submit via the provider batch API
-    fallback: interactive           # the only valid fallback: failed/expired batch
-                                    # items are re-run interactively and recorded
+    fallback: interactive           # items the batch cannot answer are re-run live
+    window_hours: 24                # batch expiry, measured from submission
 ```
 
-`batch-offpeak` defers analysis to the configured window; `batch.enabled` routes calls
-through the provider's batch API. Both require an endpoint — strict validation and
-`secscan init` reject batch settings in agent-mediated mode rather than silently
-ignoring them. The `--policy` flag on `secscan run` overrides the execution policy for
-a single scan, and any machine-specific value can come from an env override in the
-`SECSCAN_<SECTION>_<KEY>` form (e.g. `SECSCAN_LLM_MODE`, `SECSCAN_EXECUTION_POLICY_MODE`).
+The scan waits in the foreground and prints `processing c/N` status lines; Ctrl-C is
+safe — the batch reference is persisted before waiting and the next run resumes the
+same batch. Every answer is stored under `.secscan/analysis/answers/` and reused only
+when the request is byte-identical, so nothing is paid for twice. Failed, expired, or
+missing items fall back to live requests (with retries on 429/5xx) and are listed in
+the report with their reasons. Configurations written before this default contain an
+explicit `mode: interactive` and keep that behaviour; `--policy` on `secscan run`
+overrides the policy for one scan, and any machine-specific value can come from an env
+override in the `SECSCAN_<SECTION>_<KEY>` form (e.g. `SECSCAN_LLM_MODE`,
+`SECSCAN_EXECUTION_POLICY_MODE`). Details: [Configuration → Endpoint
+scheduling](docs/configuration.md#endpoint-scheduling-batch-default-vs-interactive).
 
 `secscan init` also accepts `--install[=all|tool,tool]`, `--yes`, and
 `--no-input`; nothing installs before the exact list is presented and confirmed.
@@ -276,12 +310,16 @@ One command, **`secscan`**, covers both setup and scanning:
 | `secscan init <dir> [--ai <agent>]` | Scaffold the skill into an agent and/or generate config + check the environment; re-run to upgrade in place |
 | `secscan agents` | List supported agents and their skill paths |
 | `secscan status <dir>` | Installed skills, stage state, handoff progress, latest report |
-| `secscan run [--profile] [--policy] [--set k=v] [--segment id] [--full]` | Run a scan |
+| `secscan run [--profile] [--policy] [--set k=v] [--segment id] [--full] [--output quiet\|default\|verbose]` | Run a scan; progress on stderr, summary on stdout |
 | `secscan report [--repo name] [--format markdown\|json\|html]` | Re-render from artifacts |
 | `secscan data [--refresh-eol]` | Knowledge-base versions and dataset staleness |
 | `secscan version` | Tool and schema versions |
 
-Exit codes: `0` ok · `1` error · `2` not ready · `3` agent handoff pending.
+Exit codes: `0` ok · `1` error · `2` not ready · `3` agent handoff pending · `130` interrupted.
+
+A running scan prints each stage, segment (`i/N`), external tool and coverage note
+to stderr as it happens, with a heartbeat during long steps; `-q` silences it, `-v`
+adds budget and tool detail, and `.secscan/scan.log` always keeps the full trace.
 
 From an installed skill payload the same surface is
 `python -m pipeline.scan_cli <subcommand>` with `<skill>/scripts` on `PYTHONPATH`
@@ -336,7 +374,8 @@ These are enforced by tests, not just intent:
 ├── system-review.md
 ├── reports/<scan-id>.{md,json,html}   one data set, three renderings
 ├── state.json                  checkpoints, file hashes
-└── usage.json                  tokens per stage/tier, savings vs baseline
+├── usage.json                  tokens per stage/tier, savings vs baseline
+└── scan.log                    progress trace of the latest run (diagnostic, not an artifact)
 ```
 
 Gitignored by default; install with `--commit-artifacts` to share scan history.
@@ -401,6 +440,17 @@ Accuracy hardening (feature 002 — built and tested):
   `supply-chain-detection`) are release-blocking. v1 integration recognition
   covers SDK clients, raw HTTP model endpoints, and local endpoints; indirect
   invocation (agent frameworks, queues) is declared as undetermined posture
+- ✅ Finding triage round (feature 013): after correlation, the reasoning layer
+  re-examines each finalized finding — confirm / downgrade / refute-with-citations /
+  flag-with-a-question. Refutations and downgrades apply only when the pipeline
+  mechanically re-verifies every citation (file, lines, exact pattern) against the
+  repo; failed proofs degrade to flags, never suppressions. Verified refutations
+  land in the auditable suppression list; flags render in an Awaiting Verification
+  report section whose questions operators answer in `.secscan/triage/declarations.json`
+  (user-declared provenance, reversible, lapses safely). Credential findings are
+  never refutable — the value never reaches reasoning. Same round in every
+  execution mode (agent handoff, endpoint, provider batch); `quick` profiles skip
+  it, `triage.enabled` overrides
 - ✅ External scanner tooling (spec 008): `init` detects project ecosystems and
   maps applicable tools from the shipped registry (`semgrep`, `gitleaks`,
   `osv-scanner`, `trivy`, `npm audit`, `pip-audit`, `govulncheck`, OWASP
