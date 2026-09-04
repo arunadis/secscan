@@ -82,6 +82,14 @@
             ],
             "description": "security-relevant file class, so the Coverage Statement is derivable from the graph rather than recomputed (FR-029)"
           },
+          "imports": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "sorted, deduplicated import statements extracted from this file (feature 014, FR-001); absent when the file was not parsed"
+          },
           "annotations": {
             "type": "array",
             "items": {

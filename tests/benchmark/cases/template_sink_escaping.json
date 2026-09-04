@@ -1,0 +1,13 @@
+{
+  "case_id": "seeded-template-sink-escaping",
+  "kind": "seeded-workspace",
+  "target": "tests/fixtures/template_escaped.py",
+  "source_of_truth": "Ground truth declared by the fixture generator: an escaped [innerHTML] binding with (a) no bypass and (b) one bypassSecurityTrustHtml call. Reproduces the 20260904T085653Z-7ab7bd cross-check failure where a stored-XSS finding claimed script execution through innerHTML although Angular's DomSanitizer escapes the binding and no bypass exists in the source.",
+  "expectations": [
+    {
+      "defect_class": "calibration",
+      "assertion": "An XSS-class finding located at an escaped template sink with no bypass in the member is credited against the framework control: severity reduced and impact reframed to the control's documented residual exposure — script execution is not claimed. The same finding WITH a bypass call in the member is not credited.",
+      "baseline": "The reviewed scan asserted stored XSS via innerHTML at full severity with no sanitizer analysis; the control catalogue could not engage because the sink lived in a template."
+    }
+  ]
+}

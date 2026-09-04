@@ -125,3 +125,136 @@ def _finding(rule: dict[str, Any], repo: str, path: str, line: int) -> dict[str,
         "recommendation": rule["recommendation"],
         "tool_ref": f"misconfig:{rule['id']}",
     }
+
+
+# ----------------------------------------------------- integration evidence (014)
+
+
+#: Manifest files scanned for `packages` markers, per member root.
+_MANIFEST_NAMES = (
+    "package.json", "requirements.txt", "pyproject.toml", "pom.xml", "build.gradle", "go.mod"
+)
+
+STATE_INTEGRATED = "integrated"
+STATE_NO_INTEGRATION = "no-integration-found"
+STATE_UNDETERMINED_INTEGRATION = "undetermined"
+
+
+def _manifest_texts(root: Path) -> dict[str, str]:
+    texts: dict[str, str] = {}
+    for name in _MANIFEST_NAMES:
+        path = root / name
+        if path.exists():
+            try:
+                texts[name] = path.read_text(errors="replace")
+            except OSError:
+                continue
+    return texts
+
+
+def attach_integration(
+    findings: list[dict[str, Any]],
+    roots: dict[str, Path],
+    rules: list[dict[str, Any]] | None = None,
+) -> None:
+    """Attach an ``integration`` block to every misconfig finding (FR-004).
+
+    Three states, mirroring the usage-evidence contract: `integrated` (markers
+    hit, evidence listed), `no-integration-found` (rule carries markers, all
+    evaluated, zero hits — remediation shifts to removal), and `undetermined`
+    (rule lacks markers, or evidence could not be read). Neither of the latter
+    two suppresses the finding, and undetermined never inflates it.
+    """
+    index = {rule["id"]: rule for rule in (rules if rules is not None else load_rules())}
+    file_cache: dict[str, list[tuple[str, str]]] = {}
+    for finding in findings:
+        tool_ref = str(finding.get("tool_ref") or "")
+        if not tool_ref.startswith("misconfig:"):
+            continue
+        rule_id = tool_ref.split(":", 1)[1]
+        rule = index.get(rule_id)
+        repo = str((finding.get("location") or {}).get("repo") or "")
+        root = roots.get(repo)
+        if rule is None:
+            finding["integration"] = {
+                "state": STATE_UNDETERMINED_INTEGRATION,
+                "reason": f"no rule '{rule_id}' in the shipped pack",
+            }
+            continue
+        markers = rule.get("integration_markers")
+        if not markers:
+            finding["integration"] = {
+                "state": STATE_UNDETERMINED_INTEGRATION,
+                "reason": f"rule '{rule_id}' carries no integration markers",
+            }
+            continue
+        if root is None or not Path(root).exists():
+            finding["integration"] = {
+                "state": STATE_UNDETERMINED_INTEGRATION,
+                "reason": f"member '{repo}' root unavailable; markers not evaluable",
+            }
+            continue
+
+        evidence: list[dict[str, Any]] = []
+        packages = [str(p) for p in markers.get("packages") or ()]
+        if packages:
+            manifests = _manifest_texts(Path(root))
+            for name in sorted(manifests):
+                for package in sorted(packages):
+                    if package in manifests[name]:
+                        evidence.append(
+                            {
+                                "repo": repo,
+                                "file": name,
+                                "reason": f"manifest references '{package}'",
+                            }
+                        )
+        import_markers = [str(i) for i in markers.get("imports") or ()]
+        if import_markers:
+            if repo not in file_cache:
+                file_cache[repo] = []
+                for path in iter_source_files(Path(root)):
+                    try:
+                        file_cache[repo].append(
+                            (
+                                path.relative_to(Path(root)).as_posix(),
+                                path.read_text(errors="replace"),
+                            )
+                        )
+                    except OSError:
+                        continue
+            for relative, text in sorted(file_cache[repo]):
+                for marker in sorted(import_markers):
+                    if marker in text:
+                        evidence.append(
+                            {
+                                "repo": repo,
+                                "file": relative,
+                                "reason": f"source references '{marker}'",
+                            }
+                        )
+        for glob in sorted(str(g) for g in markers.get("config_presence") or ()):
+            if repo not in file_cache:
+                file_cache[repo] = []
+                for path in iter_source_files(Path(root)):
+                    file_cache[repo].append((path.relative_to(Path(root)).as_posix(), ""))
+            for relative, _ in sorted(file_cache[repo]):
+                if fnmatch(relative, glob) or fnmatch(Path(relative).name, glob):
+                    evidence.append(
+                        {"repo": repo, "file": relative, "reason": f"matches '{glob}'"}
+                    )
+
+        if evidence:
+            unique = [dict(t) for t in {tuple(sorted(e.items())) for e in evidence}]
+            finding["integration"] = {
+                "state": STATE_INTEGRATED,
+                "evidence": sorted(unique, key=lambda e: (e["repo"], e["file"], e["reason"])),
+            }
+        else:
+            finding["integration"] = {"state": STATE_NO_INTEGRATION}
+            finding["recommendation"] = (
+                f"No integration with the technology this rule configures was found "
+                f"(no marker for '{rule_id}' in manifests, imports, or config); if this "
+                "configuration is unused, remove it. "
+                + str(finding.get("recommendation", ""))
+            )

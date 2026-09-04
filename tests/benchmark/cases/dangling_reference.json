@@ -1,0 +1,13 @@
+{
+  "case_id": "seeded-dangling-reference",
+  "kind": "seeded-workspace",
+  "target": "tests/integration/test_report_quarantine.py (drives tests/fixtures/single_repo_shop.py with a poisoned system review)",
+  "source_of_truth": "Reproduces the 20260904T085653Z-7ab7bd cross-check observation: the System Review referenced SEC-0006, which does not appear in the findings list. The quarantine behaviour is injected inductively (poisoned narrative) because a dangling reference is a pipeline bug that cannot be produced organically.",
+  "expectations": [
+    {
+      "defect_class": "report-consistency",
+      "assertion": "A narrative section referencing a finding id not admitted to the report is quarantined: the report publishes without it, declares the omission with the identifier visible, and the scan exits with code 4; a clean report exits 0 with the frozen three-line stdout summary unchanged, and carries no quarantined_sections field.",
+      "baseline": "The reviewed report referenced SEC-0006, which does not exist in its findings list; nothing validated narrative references before publication."
+    }
+  ]
+}

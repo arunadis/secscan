@@ -11,6 +11,7 @@ Exit codes apply to `secscan run` and the payload CLI:
 | `1` | error — including an analysis endpoint that kept refusing after all retries (one line on stderr, no traceback; segments already analysed are kept and the re-run resumes from the failed one) |
 | `2` | not ready (environment/config prerequisites unmet) |
 | `3` | agent handoff pending — reasoning requests await answers in `.secscan/handoff/`; re-run to resume |
+| `4` | report published with quarantined narrative — a narrative section (system review, cross-system findings, attack paths, recommendations) referenced a finding id not admitted to the report and was omitted; the omission is declared in the report's *Report Integrity* section, and all findings still publish |
 | `130` | interrupted by the operator (Ctrl-C); checkpoints are intact, re-run to resume. Under the batch policy the line also says how many provider batches are still processing — the re-run polls them instead of resubmitting |
 
 ## `secscan init <dir>`

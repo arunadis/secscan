@@ -101,6 +101,35 @@
         }
       }
     },
+    "quarantined_sections": {
+      "type": "array",
+      "description": "feature 014 (FR-010): narrative sections quarantined for referencing a finding id not admitted to this report; present only when non-empty",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "section",
+          "dangling_id",
+          "reason"
+        ],
+        "properties": {
+          "section": {
+            "enum": [
+              "system_review",
+              "cross_system_findings",
+              "attack_paths",
+              "recommendations"
+            ]
+          },
+          "dangling_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      }
+    },
     "cross_system_findings": {
       "type": "array",
       "items": {

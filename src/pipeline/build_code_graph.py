@@ -158,6 +158,7 @@ class GraphBuilder:
         # on the traced path (FR-022) instead of crediting it by default.
         if text:
             self._annotate_inline_template_sinks(facts, text)
+            self._annotate_bypass_sites(facts, text)
             self._annotate_llm_integration(facts, text)
         file_node = self.add_node(
             id=node_id(repo, facts.path),
@@ -167,6 +168,7 @@ class GraphBuilder:
             language=facts.language,
             parsed=True,
             file_class="source",
+            imports=facts.imports,
             annotations=facts.annotations,
         )
 
@@ -214,6 +216,33 @@ class GraphBuilder:
             if caller in self.nodes:
                 kind = {"read": "reads", "write": "writes"}.get(access.operation, "writes")
                 self.add_edge(caller, store_node, kind)
+
+    def _annotate_bypass_sites(self, facts: FileFacts, text: str) -> None:
+        """Mark symbols that call a documented control-bypass syntax (feature 014).
+
+        `bypassSecurityTrustHtml` and friends are calls, not markup sinks, so the
+        sink extractor never sees them — yet they are exactly what discredits a
+        framework control for template sinks (member-wide bypass scan, FR-006).
+        Only shipped-catalogue syntaxes count; inventing one would silently
+        discredit controls we know nothing about.
+        """
+        from pipeline.controls import all_bypass_syntaxes
+
+        for syntax in all_bypass_syntaxes():
+            start = text.find(syntax)
+            if start == -1:
+                continue
+            line = text.count("\n", 0, start) + 1
+            matched = False
+            for symbol in facts.symbols:
+                if symbol.line_start <= line <= symbol.line_end:
+                    symbol.annotations = tuple(
+                        sorted(set(symbol.annotations) | {"control_bypass"})
+                    )
+                    matched = True
+            if not matched:
+                # module-level call: mark the file node itself
+                facts.annotations = sorted(set(facts.annotations) | {"control_bypass"})
 
     def _annotate_llm_integration(self, facts: FileFacts, text: str) -> None:
         """Mark LLM integration points so the modern-exploit category can trace

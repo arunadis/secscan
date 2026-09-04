@@ -26,6 +26,7 @@
     "nodejs": "nodejs",
     "@angular/core": "angular",
     "@angular/cli": "angular",
+    "@angular/platform-browser": "angular",
     "react": "react",
     "vue": "vue",
     "django": "django",

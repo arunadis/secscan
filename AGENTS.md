@@ -81,7 +81,9 @@ specs/             spec-first history (001–009), per-feature spec/plan/contrac
   suppress a finding or read as clean.
 - **Budgets enforced against the serialized request**, never estimates.
 - **Agent handoff**: exit code 3 means reasoning files await answers in
-  `.secscan/handoff/`; the scan resumes when re-run.
+  `.secscan/handoff/`; the scan resumes when re-run. Exit code 4 means the report
+  published with narrative section(s) quarantined for a dangling finding
+  reference — declared in the report's Report Integrity section, never stdout.
 - **Progress is a side channel**: `src/pipeline/progress.py` is the only module that
   writes to the terminal during a scan (stderr) or to `.secscan/scan.log`. Never print
   from a stage; emit through the reporter. Timing/level never enters an artifact, and

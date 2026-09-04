@@ -1,144 +1,268 @@
 {
   "version": "1",
-  "dataset_date": "2026-08-31",
+  "dataset_date": "2026-09-04",
   "_doc": [
     "Security-misconfiguration control checks (feature 004, FR-001).",
     "Each rule is an anchored regex over the raw text of glob-selected files.",
     "Rules match call/config *shape*, never secret values; matched text is never",
-    "copied into findings. Adding a rule is a data-only change (FR-003)."
+    "copied into findings. Adding a rule is a data-only change (FR-003).",
+    "",
+    "integration_markers (feature 014, FR-004): packages = literal strings that must",
+    "appear in a dependency manifest; imports = literal strings in source text. A rule",
+    "without markers evaluates as undetermined; zero marker hits = no-integration-found."
   ],
   "rules": [
     {
       "id": "spring-csrf-disabled",
-      "stacks": ["jvm"],
-      "file_globs": ["**/*.java"],
+      "stacks": [
+        "jvm"
+      ],
+      "file_globs": [
+        "**/*.java"
+      ],
       "pattern": "csrf\\s*\\([^)]*\\)\\s*\\.\\s*disable\\s*\\(",
       "cwe": "CWE-352",
       "severity_score": 6.5,
       "title": "CSRF protection disabled",
       "description": "CSRF protection is explicitly disabled in the security configuration, so state-changing endpoints accept cross-site requests.",
-      "recommendation": "Re-enable CSRF protection (remove csrf().disable()) or document and compensate for every state-changing route it exposes."
+      "recommendation": "Re-enable CSRF protection (remove csrf().disable()) or document and compensate for every state-changing route it exposes.",
+      "integration_markers": {
+        "packages": [
+          "springframework"
+        ]
+      }
     },
     {
       "id": "spring-cors-wildcard",
-      "stacks": ["jvm"],
-      "file_globs": ["**/*.java"],
+      "stacks": [
+        "jvm"
+      ],
+      "file_globs": [
+        "**/*.java"
+      ],
       "pattern": "(?:setAllowedOrigins|setAllowedOriginPatterns|allowedOrigins)\\s*\\([^)]*\"\\*\"",
       "cwe": "CWE-942",
       "severity_score": 5.3,
       "title": "Wildcard CORS origin",
       "description": "The CORS configuration allows any origin, letting arbitrary websites issue cross-origin requests to the API.",
-      "recommendation": "Replace the wildcard with an explicit allow-list of trusted origins."
+      "recommendation": "Replace the wildcard with an explicit allow-list of trusted origins.",
+      "integration_markers": {
+        "packages": [
+          "springframework"
+        ]
+      }
     },
     {
       "id": "spring-permitall-sensitive",
-      "stacks": ["jvm"],
-      "file_globs": ["**/*.java"],
+      "stacks": [
+        "jvm"
+      ],
+      "file_globs": [
+        "**/*.java"
+      ],
       "pattern": "(?:antMatchers|requestMatchers)\\s*\\([^)]*(?:actuator|graphql|graphiql|admin|internal)[^)]*\\)\\s*\\.\\s*permitAll\\s*\\(",
       "cwe": "CWE-306",
       "severity_score": 6.5,
       "title": "Sensitive endpoint permits anonymous access",
       "description": "A sensitive endpoint (actuator, GraphQL, admin, internal) is placed on the unauthenticated allow-list.",
-      "recommendation": "Restrict the endpoint to authenticated or administrative callers, or justify the anonymous exposure per-resolver."
+      "recommendation": "Restrict the endpoint to authenticated or administrative callers, or justify the anonymous exposure per-resolver.",
+      "integration_markers": {
+        "packages": [
+          "springframework"
+        ]
+      }
     },
     {
       "id": "spring-dev-console-exposed",
-      "stacks": ["jvm"],
-      "file_globs": ["**/*.java"],
+      "stacks": [
+        "jvm"
+      ],
+      "file_globs": [
+        "**/*.java"
+      ],
       "pattern": "(?:antMatchers|requestMatchers)\\s*\\([^)]*(?:graphiql|console|h2-console)[^)]*\\)\\s*\\.\\s*permitAll\\s*\\(",
       "cwe": "CWE-489",
       "severity_score": 4.0,
       "title": "Development console exposed anonymously",
       "description": "An interactive development console is reachable without authentication, disclosing schema and easing attack crafting.",
-      "recommendation": "Disable the console outside development profiles or require administrative authentication."
+      "recommendation": "Disable the console outside development profiles or require administrative authentication.",
+      "integration_markers": {
+        "packages": [
+          "springframework"
+        ]
+      }
     },
     {
       "id": "node-cors-wildcard-credentials",
-      "stacks": ["node"],
-      "file_globs": ["**/*.js", "**/*.ts"],
+      "stacks": [
+        "node"
+      ],
+      "file_globs": [
+        "**/*.js",
+        "**/*.ts"
+      ],
       "pattern": "cors\\s*\\([^)]*origin\\s*:\\s*(?:true|[\"']\\*[\"'])",
       "cwe": "CWE-942",
       "severity_score": 5.3,
       "title": "Wildcard or reflected CORS origin",
       "description": "The CORS middleware reflects or wildcards origins, allowing arbitrary sites to read cross-origin responses.",
-      "recommendation": "Configure an explicit origin allow-list; never combine wildcard origins with credentials."
+      "recommendation": "Configure an explicit origin allow-list; never combine wildcard origins with credentials.",
+      "integration_markers": {
+        "packages": [
+          "cors"
+        ]
+      }
     },
     {
       "id": "node-cookie-missing-secure",
-      "stacks": ["node"],
-      "file_globs": ["**/*.js", "**/*.ts"],
+      "stacks": [
+        "node"
+      ],
+      "file_globs": [
+        "**/*.js",
+        "**/*.ts"
+      ],
       "pattern": "cookie\\s*:\\s*\\{[^}]*secure\\s*:\\s*false",
       "cwe": "CWE-1004",
       "severity_score": 4.3,
       "title": "Session cookie without secure flag",
       "description": "Session cookies are configured without the secure flag, exposing them to plaintext transport and client-side access.",
-      "recommendation": "Set cookie.secure and cookie.httpOnly true; terminate TLS before the app."
+      "recommendation": "Set cookie.secure and cookie.httpOnly true; terminate TLS before the app.",
+      "integration_markers": {
+        "packages": [
+          "cookie-parser",
+          "express-session",
+          "cookie-session",
+          "express"
+        ]
+      }
     },
     {
       "id": "django-debug-enabled",
-      "stacks": ["python"],
-      "file_globs": ["**/settings.py", "**/settings/*.py", "**/config/*.py"],
+      "stacks": [
+        "python"
+      ],
+      "file_globs": [
+        "**/settings.py",
+        "**/settings/*.py",
+        "**/config/*.py"
+      ],
       "pattern": "(?m)^\\s*DEBUG\\s*=\\s*True\\s*$",
       "cwe": "CWE-489",
       "severity_score": 4.0,
       "title": "Django DEBUG enabled",
       "description": "DEBUG is enabled, exposing stack traces, settings, and the debug toolbar in deployed environments.",
-      "recommendation": "Set DEBUG = False outside development; read it from environment configuration."
+      "recommendation": "Set DEBUG = False outside development; read it from environment configuration.",
+      "integration_markers": {
+        "packages": [
+          "django"
+        ]
+      }
     },
     {
       "id": "django-allowed-hosts-wildcard",
-      "stacks": ["python"],
-      "file_globs": ["**/settings.py", "**/settings/*.py", "**/config/*.py"],
+      "stacks": [
+        "python"
+      ],
+      "file_globs": [
+        "**/settings.py",
+        "**/settings/*.py",
+        "**/config/*.py"
+      ],
       "pattern": "ALLOWED_HOSTS\\s*=\\s*\\[[^\\]]*[\"']\\*[\"']",
       "cwe": "CWE-1188",
       "severity_score": 5.3,
       "title": "ALLOWED_HOSTS wildcard",
       "description": "ALLOWED_HOSTS accepts any host header, enabling host-header poisoning of generated URLs and password-reset links.",
-      "recommendation": "List the deployed hostnames explicitly."
+      "recommendation": "List the deployed hostnames explicitly.",
+      "integration_markers": {
+        "packages": [
+          "django"
+        ]
+      }
     },
     {
       "id": "django-cors-allow-all",
-      "stacks": ["python"],
-      "file_globs": ["**/settings.py", "**/settings/*.py", "**/config/*.py"],
+      "stacks": [
+        "python"
+      ],
+      "file_globs": [
+        "**/settings.py",
+        "**/settings/*.py",
+        "**/config/*.py"
+      ],
       "pattern": "CORS_ALLOW_ALL_ORIGINS\\s*=\\s*True",
       "cwe": "CWE-942",
       "severity_score": 5.3,
       "title": "CORS allows all origins",
       "description": "django-cors-headers is configured to allow every origin.",
-      "recommendation": "Use CORS_ALLOWED_ORIGINS with an explicit allow-list."
+      "recommendation": "Use CORS_ALLOWED_ORIGINS with an explicit allow-list.",
+      "integration_markers": {
+        "packages": [
+          "django-cors-headers",
+          "corsheaders"
+        ]
+      }
     },
     {
       "id": "django-csrf-exempt",
-      "stacks": ["python"],
-      "file_globs": ["**/*.py"],
+      "stacks": [
+        "python"
+      ],
+      "file_globs": [
+        "**/*.py"
+      ],
       "pattern": "@csrf_exempt",
       "cwe": "CWE-352",
       "severity_score": 6.5,
       "title": "View exempted from CSRF protection",
       "description": "A view is decorated with @csrf_exempt, accepting state-changing cross-site requests without a token.",
-      "recommendation": "Remove the exemption or replace the view with a token-authenticated API endpoint."
+      "recommendation": "Remove the exemption or replace the view with a token-authenticated API endpoint.",
+      "integration_markers": {
+        "packages": [
+          "django"
+        ]
+      }
     },
     {
       "id": "go-insecure-skip-verify",
-      "stacks": ["go"],
-      "file_globs": ["**/*.go"],
+      "stacks": [
+        "go"
+      ],
+      "file_globs": [
+        "**/*.go"
+      ],
       "pattern": "InsecureSkipVerify\\s*:\\s*true",
       "cwe": "CWE-295",
       "severity_score": 6.5,
       "title": "TLS certificate verification disabled",
-      "description": "InsecureSkipVerify is true, so TLS peers are not authenticated — connections are open to interception.",
-      "recommendation": "Remove InsecureSkipVerify; pin or add the CA explicitly instead."
+      "description": "InsecureSkipVerify is true, so TLS peers are not authenticated \u2014 connections are open to interception.",
+      "recommendation": "Remove InsecureSkipVerify; pin or add the CA explicitly instead.",
+      "integration_markers": {
+        "imports": [
+          "crypto/tls"
+        ]
+      }
     },
     {
       "id": "go-cors-wildcard-credentials",
-      "stacks": ["go"],
-      "file_globs": ["**/*.go"],
+      "stacks": [
+        "go"
+      ],
+      "file_globs": [
+        "**/*.go"
+      ],
       "pattern": "AllowedOrigins\\s*:\\s*\\[\\]string\\{\\s*\"\\*\"\\s*\\}",
       "cwe": "CWE-942",
       "severity_score": 5.3,
       "title": "Wildcard CORS origin",
       "description": "The CORS handler allows any origin.",
-      "recommendation": "List trusted origins explicitly; do not combine with AllowCredentials."
+      "recommendation": "List trusted origins explicitly; do not combine with AllowCredentials.",
+      "integration_markers": {
+        "imports": [
+          "rs/cors"
+        ]
+      }
     }
   ]
 }

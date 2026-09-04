@@ -124,13 +124,20 @@ def all_bypass_syntaxes() -> tuple[str, ...]:
 
 
 def detect_frameworks(manifest: dict[str, Any] | None, graph: dict[str, Any]) -> set[str]:
-    """Frameworks present, from dependency markers and imports in the code model."""
+    """Frameworks present, from dependency markers, imports, and node paths."""
     markers = detection_markers()
     found: set[str] = set()
     haystack = " ".join(
         sorted(
             {str(f) for f in (manifest or {}).get("frameworks") or ()}
             | {str(n.get("path", "")) for n in graph.get("nodes") or []}
+            # Feature 014 R1: imports now persist on file nodes — they are the
+            # authoritative "is this framework actually pulled in" signal.
+            | {
+                str(import_text)
+                for n in graph.get("nodes") or []
+                for import_text in n.get("imports") or []
+            }
         )
     )
     for marker, framework_id in markers.items():
@@ -179,6 +186,17 @@ def evaluate(
 
     framework_id, control = candidates[0]
 
+    # Feature 014 (FR-005-FR-007, clarification Q2): a sink in a markup template
+    # is gated by the control's sink list and a member-wide bypass scan, not by
+    # the traced path alone. A sink the control does not list is not applicable
+    # (`absent`), never a hedge.
+    location = finding.get("location") or {}
+    template_sink = _template_sink_for(location, nodes)
+    if template_sink is not None:
+        return _evaluate_template_sink(
+            template_sink, candidates, nodes, repo=str(location.get("repo") or "")
+        )
+
     # A control that only applies when configured cannot be credited on presence
     # alone. Jinja2 autoescaping is the canonical case: off unless switched on.
     if control.get("requires_config") and escapes_by_default(framework_id) is False:
@@ -215,6 +233,117 @@ def evaluate(
             "state": STATE_BYPASSED,
             "control": control["id"],
             "bypass_site": bypass,
+        }
+
+    return {"state": STATE_CREDITED, "control": control["id"]}
+
+
+def _template_sink_for(location: dict[str, Any], nodes: dict[str, Any]) -> dict[str, Any] | None:
+    """The template sink at the finding's location, when one exists (FR-005).
+
+    Sink sub-nodes carry ``symbol = "<marker>@<line>"`` and ``format =
+    <framework id>``; the presence of such a node in the located template file
+    is what turns control evaluation into the template branch.
+    """
+    repo, file = str(location.get("repo") or ""), str(location.get("file") or "")
+    for node in nodes.values():
+        if (
+            node.get("type") == "template"
+            and node.get("symbol")
+            and node.get("repo") == repo
+            and node.get("path") == file
+        ):
+            marker = str(node["symbol"]).rsplit("@", 1)[0]
+            return {
+                "marker": marker,
+                "framework": str(node.get("format") or ""),
+                "line_start": int(node.get("line_start") or 1),
+            }
+    return None
+
+
+def _evaluate_template_sink(
+    sink: dict[str, Any],
+    candidates: list[tuple[str, dict[str, Any]]],
+    nodes: dict[str, Any],
+    *,
+    repo: str,
+) -> dict[str, Any]:
+    """Hybrid control decision for a sink living in a markup template.
+
+    deterministic credit requires the sink in the control's shipped sink list,
+    zero bypasses member-wide, and full member parse coverage; bypass present or
+    coverage incomplete yields bypassed/unassessed (the triage round may still
+    judge it via candidate controls); a sink outside the sink list is `absent`.
+    """
+    matched = [
+        (framework_id, control)
+        for framework_id, control in candidates
+        if not sink["framework"] or framework_id == sink["framework"]
+    ]
+    if not matched:
+        return {"state": STATE_ABSENT}
+    framework_id, control = matched[0]
+    sinks = {str(s).lower() for s in control.get("sinks") or ()}
+    if sink["marker"].lower() not in sinks:
+        return {"state": STATE_ABSENT}
+
+    if control.get("requires_config") and escapes_by_default(framework_id) is False:
+        return {
+            "state": STATE_UNASSESSED,
+            "control": control["id"],
+            "unassessed_reason": (
+                f"{framework_id} does not escape by default; whether "
+                f"{', '.join(control['requires_config'])} is configured could not be "
+                "established from the analyzed files"
+            ),
+        }
+
+    unparsed = sorted(
+        {
+            str(node["path"])
+            for node in nodes.values()
+            if node.get("repo") == repo
+            and node.get("type") == "file"
+            and node.get("parsed") is False
+        }
+    )
+    if unparsed:
+        return {
+            "state": STATE_UNASSESSED,
+            "control": control["id"],
+            "unassessed_reason": (
+                f"member '{repo}' has file(s) with no parser ({', '.join(unparsed)}), so a "
+                "bypass there could not be ruled out"
+            ),
+        }
+
+    bypass_node = next(
+        (
+            nodes[node_id]
+            for node_id in sorted(nodes)
+            if nodes[node_id].get("repo") == repo
+            and "control_bypass" in (nodes[node_id].get("annotations") or [])
+        ),
+        None,
+    )
+    if bypass_node is not None:
+        return {
+            "state": STATE_BYPASSED,
+            "control": control["id"],
+            "bypass_site": {
+                "repo": bypass_node["repo"],
+                "file": bypass_node["path"],
+                "line_start": int(bypass_node.get("line_start") or 1),
+                "line_end": int(
+                    bypass_node.get("line_end") or bypass_node.get("line_start") or 1
+                ),
+                **(
+                    {"symbol": bypass_node["symbol"]}
+                    if bypass_node.get("symbol")
+                    else {}
+                ),
+            },
         }
 
     return {"state": STATE_CREDITED, "control": control["id"]}

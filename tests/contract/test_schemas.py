@@ -628,6 +628,48 @@ def test_code_graph_rejects_unknown_annotation() -> None:
     )
 
 
+def test_code_graph_file_node_accepts_optional_imports() -> None:
+    """Feature 014 (R1): imports persist on file nodes — additive, optional."""
+
+    def node(imports):
+        out = {
+            "id": "web:src/app/api.ts",
+            "repo": "web",
+            "type": "file",
+            "path": "src/app/api.ts",
+            "language": "typescript",
+            "parsed": True,
+            "file_class": "source",
+        }
+        if imports is not None:
+            out["imports"] = imports
+        return {"nodes": [out], "edges": []}
+
+    validate("code_graph", node(None))  # absent, not empty
+    validate("code_graph", node(["import {x} from '@angular/core'", "import y from 'rxjs'"]))
+    assert not is_valid("code_graph", node([42]))  # non-string entry
+    assert not is_valid("code_graph", node([""]))  # empty entry
+
+
+def test_code_graph_imports_recorded_sorted() -> None:
+    """Determinism: the builder emits imports deduplicated and sorted ascending."""
+    from pipeline.build_code_graph import GraphBuilder
+    from pipeline.extract import extract_file
+
+    source = (
+        "import z from 'zlib';\n"
+        "import a from '@angular/core';\n"
+        "import a from '@angular/core';\n"
+    )
+    facts = extract_file("src/app.ts", source, "typescript")
+    assert facts is not None
+    builder = GraphBuilder()
+    builder.add_file("web", facts)
+    imports = builder.nodes["web:src/app.ts"].get("imports")
+    assert imports is not None, "file node dropped the extracted imports"
+    assert imports == sorted(set(imports))
+
+
 def test_architecture_profile_requires_evidence_or_a_reason() -> None:
     """FR-013b: a recorded shape reflects positive evidence; unknown says why."""
     validate(

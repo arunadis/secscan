@@ -69,7 +69,9 @@ def test_end_of_support_stack_is_reported_independently(roots) -> None:
     """
     findings = audits.stack_currency_findings(roots)
     assert findings, "no end-of-support finding was produced"
-    packages = {f["description"].split()[0] for f in findings}
+    # Feature 014 (FR-008): one finding per (member, product, cycle); the
+    # packages field — not the description's first word — is authoritative.
+    packages = {p for f in findings for p in (f.get("dependency") or {}).get("packages", [])}
     assert "@angular/core" in packages
     for finding in findings:
         assert finding["cwe"] == audits.CWE_UNMAINTAINED_COMPONENT

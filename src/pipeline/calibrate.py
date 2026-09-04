@@ -102,6 +102,23 @@ def calibrate(finding: dict[str, Any], severity_ceiling: float | None = None) ->
             )
             confidence = UNASSESSED_CONFIDENCE_CEILING
 
+    # Feature 014 (FR-003, clarification Q1): an advisory with no usage evidence
+    # caps confidence and reframes its narrative — but severity is NEVER adjusted
+    # by usage, and the finding is NEVER suppressed.
+    usage = finding.get("usage") or {}
+    if usage.get("state") == "none-found" and confidence > UNCONFIRMED_CONFIDENCE_CEILING:
+        caps.append(
+            {
+                "rule": "usage-none-found",
+                "reason": (
+                    "no import, config reference, or literal dynamic use of this package "
+                    "was found in the affected member's source; the advisory applies only "
+                    "if the package is exercised"
+                ),
+            }
+        )
+        confidence = min(confidence, UNCONFIRMED_CONFIDENCE_CEILING)
+
     if _reachability_unconfirmed(finding):
         over_severity = severity_ceiling is not None and severity > severity_ceiling
         if over_severity or confidence > UNCONFIRMED_CONFIDENCE_CEILING:
@@ -158,6 +175,32 @@ def reframe_for_control(finding: dict[str, Any]) -> None:
     )
 
 
+def reframe_for_usage(finding: dict[str, Any]) -> None:
+    """Conditional narrative for an advisory with no usage evidence (FR-003).
+
+    The finding stands — an unused vulnerable package stays reported — but the
+    narrative must not assert an exploitation chain no evidence supports.
+    """
+    usage = finding.get("usage") or {}
+    if usage.get("state") != "none-found":
+        return
+    dependency = finding.get("dependency") or {}
+    package = str(dependency.get("package") or "the package")
+    members = dependency.get("affected_members") or []
+    where = f"member '{members[0]}'" if members else "the scanned source"
+    original_impact = str(finding.get("impact") or "")
+    finding["attack_scenario"] = (
+        f"No import or reference to {package} was found in {where}. Exploitation "
+        "presupposes the vulnerable code path executes; that precondition was "
+        "not established in the scanned source."
+    )
+    finding["impact"] = (
+        f"{original_impact} No usage of {package} was found in {where}, so this "
+        "impact applies only if the package is exercised at runtime — verify "
+        "whether it ships in the deployed artifact before prioritizing."
+    )
+
+
 def apply_calibration(findings: list[dict[str, Any]]) -> None:
     """Calibrate every finding in place, then reframe credited-control narratives.
 
@@ -168,6 +211,7 @@ def apply_calibration(findings: list[dict[str, Any]]) -> None:
     for finding in findings:
         calibrate(finding, ceiling)
         reframe_for_control(finding)
+        reframe_for_usage(finding)
 
 
 def assert_ranking_invariant(findings: list[dict[str, Any]]) -> None:

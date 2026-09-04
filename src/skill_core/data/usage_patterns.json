@@ -1,0 +1,110 @@
+{
+  "version": "1",
+  "dataset_date": "2026-09-04",
+  "_doc": [
+    "Usage-detection rules for dependency findings (feature 014, FR-001).",
+    "",
+    "This file is the extensibility seam: mapping a module to a package,",
+    "recognising a config-file reference, or supporting another ecosystem is a",
+    "data change, never a pipeline change.",
+    "",
+    "Honest-uncertainty rules baked into the data:",
+    "- An ecosystem with no entry here, or an entry whose rule lists are all",
+    "  empty, means usage CANNOT be determined -> `undetermined`, never",
+    "  `none-found`. `none-found` requires every applicable form to have run.",
+    "- dynamic_forms only match string literals. Anything else is unattributable",
+    "  and yields `undetermined`.",
+    "- dev_markers classify matched locations as development-only; a package used",
+    "  only in such files is `found` with role `development`.",
+    "",
+    "Extract kinds for config_files rules:",
+    "- json-string-array: parse the file as JSON, walk the dotted `path`, treat",
+    "  every string in the resulting array/object keys as a package reference.",
+    "- regex: the pattern MUST declare a named group `pkg` capturing the package."
+  ],
+  "ecosystems": {
+    "npm": {
+      "module_map": [],
+      "module_strategy": "npm-specifier",
+      "config_files": [
+        {
+          "file_glob": "webpack.config.*",
+          "extract": {"kind": "regex", "pattern": "(?m)^\\s*['\"]?(?P<pkg>[\\w@./-]+)['\"]?\\s*:\\s*require\\.resolve\\("},
+          "note": "webpack resolve.alias values loaded via require.resolve"
+        },
+        {
+          "file_glob": "tailwind.config.*",
+          "extract": {"kind": "regex", "pattern": "(?m)require\\(['\"](?P<pkg>[\\w@./-]+)['\"]\\)"},
+          "note": "tailwind plugins loaded by require()"
+        },
+        {
+          "file_glob": ".babelrc*",
+          "extract": {"kind": "json-string-array", "path": "plugins"},
+          "note": "babel plugin list"
+        },
+        {
+          "file_glob": ".babelrc*",
+          "extract": {"kind": "json-string-array", "path": "presets"},
+          "note": "babel preset list"
+        }
+      ],
+      "dynamic_forms": [
+        {"language": "javascript", "kind": "regex", "pattern": "\\brequire\\(\\s*['\"](?P<pkg>[^'\"]+)['\"]\\s*\\)"},
+        {"language": "typescript", "kind": "regex", "pattern": "\\brequire\\(\\s*['\"](?P<pkg>[^'\"]+)['\"]\\s*\\)"},
+        {"language": "tsx", "kind": "regex", "pattern": "\\brequire\\(\\s*['\"](?P<pkg>[^'\"]+)['\"]\\s*\\)"},
+        {"language": "javascript", "kind": "regex", "pattern": "\\bimport\\(\\s*['\"](?P<pkg>[^'\"]+)['\"]\\s*\\)"},
+        {"language": "typescript", "kind": "regex", "pattern": "\\bimport\\(\\s*['\"](?P<pkg>[^'\"]+)['\"]\\s*\\)"},
+        {"language": "tsx", "kind": "regex", "pattern": "\\bimport\\(\\s*['\"](?P<pkg>[^'\"]+)['\"]\\s*\\)"}
+      ],
+      "dev_markers": [
+        "(^|/)(__tests__|test|tests|spec|e2e|cypress|fixtures?)/",
+        "\\.(spec|test)\\.[tj]sx?$",
+        "(^|/)karma\\.conf\\.",
+        "(^|/)(jest|vitest)\\.config\\.",
+        "(^|/)webpack\\.config\\."
+      ]
+    },
+    "pypi": {
+      "module_map": [
+        {"module": "dateutil", "package": "python-dateutil"},
+        {"module": "PIL", "package": "Pillow"},
+        {"module": "yaml", "package": "PyYAML"},
+        {"module": "cv2", "package": "opencv-python"},
+        {"module": "sklearn", "package": "scikit-learn"},
+        {"module": "Crypto", "package": "pycryptodome"},
+        {"module": "bs4", "package": "beautifulsoup4"},
+        {"module": "jwt", "package": "PyJWT"},
+        {"module": "serial", "package": "pyserial"},
+        {"module": "usb", "package": "pyusb"}
+      ],
+      "module_strategy": "first-segment",
+      "config_files": [],
+      "dynamic_forms": [
+        {"language": "python", "kind": "regex", "pattern": "\\b__import__\\(\\s*['\"](?P<pkg>[^'\"]+)['\"]\\s*\\)"},
+        {"language": "python", "kind": "regex", "pattern": "\\bimportlib\\.import_module\\(\\s*['\"](?P<pkg>[^'\"]+)['\"]\\s*\\)"}
+      ],
+      "dev_markers": [
+        "(^|/)(tests?|fixtures?|conftest)/",
+        "(^|/)conftest\\.py$",
+        "(^|/)test_[^/]*\\.py$",
+        "(^|/)[^/]*_test\\.py$",
+        "(^|/)setup\\.py$",
+        "(^|/)noxfile\\.py$"
+      ]
+    },
+    "go": {
+      "module_map": [],
+      "module_strategy": "module-path",
+      "config_files": [],
+      "dynamic_forms": [],
+      "dev_markers": ["(^|/)[^/]*_test\\.go$"]
+    },
+    "maven": {
+      "module_map": [],
+      "module_strategy": "package-prefix",
+      "config_files": [],
+      "dynamic_forms": [],
+      "dev_markers": ["(^|/)src/test/"]
+    }
+  }
+}

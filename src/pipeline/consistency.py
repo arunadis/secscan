@@ -10,10 +10,13 @@ is sound.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
 from pipeline import controls
+
+_REFERENCE = re.compile(r"SEC-\d{4,}")
 
 
 @dataclass(frozen=True)
@@ -33,7 +36,7 @@ def _sections(report: dict[str, Any]) -> set[str]:
     return {band for band, findings in (report.get("findings_by_band") or {}).items() if findings}
 
 
-def check(report: dict[str, Any]) -> list[Contradiction]:
+def check(report: dict[str, Any], system_review: str = "") -> list[Contradiction]:
     """Every internal contradiction in ``report``, deterministically ordered."""
     problems: list[Contradiction] = []
     present = _sections(report)
@@ -115,18 +118,23 @@ def check(report: dict[str, Any]) -> list[Contradiction]:
         control = finding.get("framework_control") or {}
         if control.get("state") == controls.STATE_CREDITED:
             impact = str(finding.get("impact", "")).lower()
-            for phrase in ("script execution", "arbitrary script", "execute arbitrary"):
-                if phrase in impact:
-                    problems.append(
-                        Contradiction(
-                            rule="impact-contradicts-credited-control",
-                            where=identifier,
-                            detail=(
-                                f"impact claims '{phrase}' while control "
-                                f"'{control.get('control')}' is credited as preventing it"
-                            ),
+            # A properly reframed narrative quotes the control's shipped residual
+            # impact ("script execution does not") plus the reframe signature; the
+            # phrases below in that negated context are not claims.
+            reframed = "not achievable while this control is in place" in impact
+            if not reframed:
+                for phrase in ("script execution", "arbitrary script", "execute arbitrary"):
+                    if phrase in impact:
+                        problems.append(
+                            Contradiction(
+                                rule="impact-contradicts-credited-control",
+                                where=identifier,
+                                detail=(
+                                    f"impact claims '{phrase}' while control "
+                                    f"'{control.get('control')}' is credited as preventing it"
+                                ),
+                            )
                         )
-                    )
 
         # 5. A reproduction depending on a precondition the finding denies
         #    (FR-011) — the benchmark's self-contradiction.
@@ -179,6 +187,43 @@ def check(report: dict[str, Any]) -> list[Contradiction]:
                 )
             )
 
+    # 9. Residual: every narrative finding-id reference must resolve (feature
+    # 014, FR-010). Quarantine removed unresolvable sections before this gate; a
+    # reference surviving to this point is a pipeline defect, not user data.
+    from pipeline.generate_report import admitted_ids
+
+    admitted = admitted_ids(report)
+    reference_texts: list[tuple[str, str]] = [("system_review", system_review)]
+    for entry in report.get("attack_paths") or []:
+        reference_texts.append(
+            (
+                "attack_paths",
+                " ".join(
+                    [
+                        *(str(i) for i in entry.get("finding_ids") or []),
+                        str(entry.get("description") or ""),
+                    ]
+                ),
+            )
+        )
+    reference_texts.append(
+        (
+            "cross_system_findings",
+            " ".join(str(i) for i in report.get("cross_system_findings") or []),
+        )
+    )
+    for item in report.get("recommendations") or []:
+        reference_texts.append(("recommendations", str(item)))
+    for section, text in reference_texts:
+        for identifier in sorted(set(_REFERENCE.findall(text)) - admitted):
+            problems.append(
+                Contradiction(
+                    rule="dangling-finding-reference",
+                    where=section,
+                    detail=f"references {identifier}, which is not admitted to this report",
+                )
+            )
+
     return sorted(problems, key=lambda p: (p.rule, p.where, p.detail))
 
 
@@ -193,13 +238,15 @@ class ReportInconsistent(RuntimeError):
         )
 
 
-def enforce(report: dict[str, Any], strict: bool = True) -> list[Contradiction]:
+def enforce(
+    report: dict[str, Any], strict: bool = True, system_review: str = ""
+) -> list[Contradiction]:
     """Gate the report. Raises when ``strict`` and any contradiction remains.
 
     ``strict=False`` exists for callers re-rendering historical artifacts, which
     may predate these rules and cannot be regenerated.
     """
-    problems = check(report)
+    problems = check(report, system_review=system_review)
     if problems and strict:
         raise ReportInconsistent(problems)
     return problems

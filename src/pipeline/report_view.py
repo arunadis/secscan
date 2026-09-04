@@ -95,6 +95,16 @@ def filter_by_repo(report: dict[str, Any], repo: str) -> dict[str, Any]:
            view.get("cross_system_findings") else "")
         + "See the unified workspace report for the full picture."
     )
+
+    # Feature 014 (FR-010): a view must not reference findings filtered out of it.
+    from pipeline.generate_report import resolve_narrative_references
+
+    _review, quarantined = resolve_narrative_references(view, "")
+    if quarantined:
+        existing = list(view.get("quarantined_sections") or [])
+        view["quarantined_sections"] = sorted(
+            existing + quarantined, key=lambda q: (q["section"], q["dangling_id"])
+        )
     return view
 
 

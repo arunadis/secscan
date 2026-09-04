@@ -150,6 +150,18 @@ secscan run --full
 Because the exchange is files, one scan can span **multiple agent sessions** —
 answer what you can, re-run, repeat. Partial answers keep prior work.
 
+### Report integrity (exit code 4)
+
+If a report's narrative sections (system review, attack paths, …) reference a
+finding identifier that is not part of the report, the offending section is
+quarantined: the report still publishes — all findings intact — with the omission
+declared in a *Report Integrity* section, and the scan exits with code 4.
+Dependency findings also carry a **usage** state (found / none-found /
+undetermined) so an advisory never narrates exploitation for a package nothing
+imports, and misconfiguration findings carry an **integration** state so stale
+rules-config (e.g. backend access rules for a service nothing integrates) reads
+as removal work, not as a live attack surface.
+
 ## Configuration
 
 One human-editable file, `.secscan/config.yaml`, strictly validated before

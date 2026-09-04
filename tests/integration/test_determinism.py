@@ -144,6 +144,29 @@ def test_rescanning_the_same_tree_is_stable(tmp_path: Path) -> None:
         assert before[name] == after[name], f"{name} changed on re-scan"
 
 
+def test_graph_persists_imports_deterministically(tmp_path: Path) -> None:
+    """Feature 014 R1/FR-011: imports ride along in the graph, sorted, stable."""
+    from tests.fixtures.single_repo_shop import build
+
+    first_root = build(tmp_path / "a")
+    second_root = build(tmp_path / "b")
+    _scan(first_root)
+    _scan(second_root)
+
+    graphs = []
+    for root in (first_root, second_root):
+        graph = json.loads((root / ".secscan" / "code-graph.json").read_text())
+        graphs.append(graph["payload"] if "payload" in graph else graph)
+    for graph in graphs:
+        with_imports = [n for n in graph["nodes"] if n.get("type") == "file" and n.get("imports")]
+        assert with_imports, "no file node in the graph carried its extracted imports"
+        for node in with_imports:
+            assert node["imports"] == sorted(set(node["imports"])), node["id"]
+    first_nodes = {n["id"]: n.get("imports") for n in graphs[0]["nodes"]}
+    second_nodes = {n["id"]: n.get("imports") for n in graphs[1]["nodes"]}
+    assert first_nodes == second_nodes
+
+
 def test_audit_outcomes_carry_no_volatile_text(tmp_path: Path) -> None:
     """Tool diagnostics embed absolute paths and timestamps; they must not survive."""
     from tests.fixtures.single_repo_shop import build

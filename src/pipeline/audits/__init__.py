@@ -185,36 +185,85 @@ def _manifest_for(ecosystem: str) -> str:
 def stack_currency_findings(
     roots: dict[str, Path], start: int = 1
 ) -> list[dict[str, Any]]:
-    """Findings for declared versions past their support window (FR-034)."""
+    """Findings for declared versions past their support window (FR-034).
+
+    Feature 014 (FR-008/FR-009): signals roll up per (member, product, cycle) —
+    `@angular/core` and `@angular/platform-browser` at 9.0.1 are one finding,
+    not two. IDs are assigned after merging; currency findings NEVER merge with
+    advisory (CVE) findings for the same package (their dependency block carries
+    no advisory ids or ranges, so the external-merge seam cannot match them).
+    """
     import json
     import re
 
     findings: list[dict[str, Any]] = []
     index = start
     for member, root in sorted(roots.items()):
-        declared: dict[str, str] = {}
+        # name -> (version, exposure). devDependencies are development-only.
+        declared: dict[str, tuple[str, str]] = {}
         package_json = root / "package.json"
+        ecosystem = "pypi"
+        manifest = "requirements.txt"
         if package_json.exists():
+            ecosystem = "npm"
+            manifest = "package.json"
             try:
                 document = json.loads(package_json.read_text())
             except (OSError, json.JSONDecodeError):
                 document = {}
-            for key in ("dependencies", "devDependencies"):
+            for key, exposure in (("dependencies", "runtime"), ("devDependencies", "development")):
                 for name, spec in (document.get(key) or {}).items():
                     version = re.sub(r"^[^\d]*", "", str(spec))
                     if version:
-                        declared[name] = version
+                        declared.setdefault(name, (version, exposure))
         requirements = root / "requirements.txt"
         if requirements.exists():
+            ecosystem = "pypi"
+            manifest = "requirements.txt"
             for line in requirements.read_text(errors="replace").splitlines():
                 match = re.match(r"\s*([A-Za-z0-9._-]+)\s*==\s*([\d.]+)", line)
                 if match:
-                    declared[match.group(1).lower()] = match.group(2)
+                    declared.setdefault(match.group(1).lower(), (match.group(2), "runtime"))
 
-        for name, version in sorted(declared.items()):
+        per_cycle: dict[tuple[str, str], dict[str, Any]] = {}
+        for name, (version, exposure) in sorted(declared.items()):
             status = stack_currency.status_for(name, version)
             if status.past_eol is not True:
                 continue
+            key = (status.product, status.cycle)
+            entry = per_cycle.setdefault(
+                key, {"status": status, "packages": {}, "runtime": False}
+            )
+            entry["packages"][name] = version
+            entry["runtime"] = entry["runtime"] or exposure == "runtime"
+
+        for (product, cycle) in sorted(per_cycle):
+            entry = per_cycle[(product, cycle)]
+            status = entry["status"]
+            packages = sorted(entry["packages"])
+            evidence = [
+                {
+                    "repo": member,
+                    "file": manifest,
+                    "reason": (
+                        f"declares {name} {entry['packages'][name]}; support for the "
+                        f"{cycle} cycle ended {status.eol_date}"
+                    ),
+                }
+                for name in packages
+            ]
+            if len(packages) == 1:
+                name = packages[0]
+                description = (
+                    f"{name} {entry['packages'][name]} is past its end of support "
+                    f"({status.eol_date}), so it receives no security fixes."
+                )
+            else:
+                description = (
+                    f"{product} packages ({', '.join(packages)}) on cycle {cycle} are "
+                    f"past their end of support ({status.eol_date}), so they receive "
+                    "no security fixes."
+                )
             findings.append(
                 {
                     "id": f"SEC-{index:04d}",
@@ -224,37 +273,41 @@ def stack_currency_findings(
                     "confidence": 0.9,
                     "location": {
                         "repo": member,
-                        "file": "package.json" if package_json.exists() else "requirements.txt",
+                        "file": manifest,
                         "line_start": 1,
                         "line_end": 1,
                         "tier": "file",
                         "symbol_confirmed": False,
                     },
-                    "description": (
-                        f"{name} {version} is past its end of support "
-                        f"({status.eol_date}), so it receives no security fixes."
-                    ),
-                    "evidence": [
-                        {
-                            "repo": member,
-                            "file": "package.json" if package_json.exists() else "requirements.txt",
-                            "reason": (
-                                f"declares {name} {version}; support for the "
-                                f"{status.cycle} cycle ended {status.eol_date}"
-                            ),
-                        }
-                    ],
+                    "description": description,
+                    "evidence": evidence,
                     "attack_scenario": (
-                        f"A vulnerability disclosed in {name} after {status.eol_date} will "
-                        "never receive an upstream fix for this version."
+                        f"A vulnerability disclosed in {product} {cycle} after "
+                        f"{status.eol_date} will never receive an upstream fix for "
+                        "this cycle."
                     ),
                     "impact": (
                         "Unpatched vulnerabilities accumulate with no remediation path "
                         "short of a major upgrade."
                     ),
-                    "recommendation": f"Move {name} to a supported release cycle.",
+                    "recommendation": (
+                        f"Move {'; '.join(packages)} to a supported release cycle."
+                        if len(packages) == 1
+                        else f"Move the {product} packages to a supported release cycle."
+                    ),
                     "source": "dependency-audit",
                     "status": "local",
+                    "dependency": {
+                        "package": packages[0] if len(packages) == 1 else product,
+                        "ecosystem": ecosystem,
+                        "packages": packages,
+                        "product": product,
+                        "cycle": cycle,
+                        "signals": ["past-eol"],
+                        "exposure": "runtime" if entry["runtime"] else "development",
+                        "affected_members": [member],
+                        "attribution": "per-member",
+                    },
                 }
             )
             index += 1

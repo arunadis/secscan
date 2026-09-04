@@ -115,6 +115,15 @@ def render_html(report: dict[str, Any], system_review: str = "") -> str:
     if system_review.strip():
         add('<section id="system-review"><h2>System-Level Review</h2>')
         add(f"<p>{_esc(system_review.strip())}</p></section>")
+    if report.get("quarantined_sections"):
+        add('<section id="report-integrity"><h2>Report Integrity</h2>')
+        add("<p>Narrative content was quarantined because it referenced finding "
+            "identifiers not admitted to this report; the omission is declared, "
+            "not hidden.</p><ul>")
+        for entry in report["quarantined_sections"]:
+            add(f"<li>Section <code>{_esc(entry['section'])}</code> omitted: referenced "
+                f"<code>{_esc(entry['dangling_id'])}</code> — {_esc(entry['reason'])}</li>")
+        add("</ul></section>")
     if report.get("recommendations"):
         add('<section id="recommendations"><h2>Recommendations</h2><ul>')
         for item in report["recommendations"]:
@@ -218,6 +227,28 @@ def _render_finding(add, finding: dict[str, Any]) -> None:
         add(f'<li><strong>Compliance</strong>: {_esc(", ".join(finding["compliance_refs"]))}</li>')
     if finding.get("tool_ref"):
         add(f'<li><strong>Reported by</strong>: <code>{_esc(finding["tool_ref"])}</code></li>')
+    usage = finding.get("usage") or {}
+    if usage.get("state") == "found":
+        locations = ", ".join(
+            f"<code>{_esc(loc['repo'])}:{_esc(loc['file'])}</code> ({_esc(loc['kind'])})"
+            for loc in usage.get("locations") or []
+        )
+        add(f"<li><strong>Dependency usage</strong>: found "
+            f"({_esc(usage.get('role', 'runtime'))}): {locations}</li>")
+    elif usage.get("state") == "none-found":
+        add("<li><strong>Dependency usage</strong>: no import, config reference, or literal "
+            "dynamic use of this package was found — the finding stands, but exposure is "
+            "conditional on the package being exercised</li>")
+    elif usage.get("state") == "undetermined":
+        add(f"<li><strong>Dependency usage</strong>: undetermined — "
+            f"{_esc(usage.get('reason', ''))}</li>")
+    integration = finding.get("integration") or {}
+    if integration.get("state") == "no-integration-found":
+        add("<li><strong>Integration</strong>: no integration with the governed technology "
+            "was found — if unused, remove the configuration rather than hardening it</li>")
+    elif integration.get("state") == "undetermined":
+        add(f"<li><strong>Integration</strong>: undetermined — "
+            f"{_esc(integration.get('reason', ''))}</li>")
     # Feature 013: triage verdicts and open questions render with the finding
     # (never in place of its proven grading).
     triage_block = finding.get("triage")

@@ -145,6 +145,14 @@ def finalize(
     kept, disproven = verify.apply_verification(deduped, graph, flows)
     correlated = correlate(kept)
 
+    # Usage evidence precedes controls/calibration: a none-found advisory caps
+    # confidence and reframes its narrative there (feature 014, FR-001-FR-003).
+    from pipeline import misconfig as misconfig_mod
+    from pipeline import usage_evidence
+
+    usage_evidence.attach_usage(correlated, graph, roots)
+    misconfig_mod.attach_integration(correlated, dict(roots or {}))
+
     # Control state, then calibration: the cap is keyed on the verification
     # verdict and on whether a control could be established, so both must be
     # settled first (FR-020, FR-022c).

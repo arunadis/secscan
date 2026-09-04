@@ -8,6 +8,7 @@ reproduction block inline in both renderings.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from config.profiles import ScanProfile
@@ -55,6 +56,116 @@ def group_by_band(findings: list[dict[str, Any]]) -> dict[str, list[dict[str, An
         if subset:
             grouped[band] = sorted(subset, key=rank_key)
     return grouped
+
+
+def admitted_ids(report: dict[str, Any]) -> set[str]:
+    """Finding identifiers admitted to this report (FR-010 reference target)."""
+    ids: set[str] = set()
+    for items in (report.get("findings_by_band") or {}).values():
+        for finding in items:
+            if isinstance(finding, dict) and finding.get("id"):
+                ids.add(str(finding["id"]))
+    return ids
+
+
+_REFERENCE = re.compile(r"SEC-\d{4,}")
+
+
+def resolve_narrative_references(
+    report: dict[str, Any], system_review: str
+) -> tuple[str, list[dict[str, Any]]]:
+    """Quarantine narrative sections whose finding references do not resolve.
+
+    Returns ``(clean system review, quarantined_sections)`` (feature 014,
+    FR-010, clarification Q5). ANY identifier-shaped token in a scanned section
+    is treated as a reference — deterministic validation, no intent inference.
+    Sections named: system review text, cross-system findings, attack paths,
+    recommendations. Findings' own fields are built from admitted ids and are
+    out of scope.
+    """
+    admitted = admitted_ids(report)
+    quarantined: list[dict[str, Any]] = []
+
+    def dangling(text: str) -> list[str]:
+        return sorted(set(_REFERENCE.findall(text)) - admitted)
+
+    if system_review.strip():
+        bad = dangling(system_review)
+        for identifier in bad:
+            quarantined.append(
+                {
+                    "section": "system_review",
+                    "dangling_id": identifier,
+                    "reason": "identifier not admitted to the report",
+                }
+            )
+        if bad:
+            system_review = ""
+
+    cross = report.get("cross_system_findings")
+    if cross:
+        bad = sorted(set(str(i) for i in cross) - admitted)
+        if bad:
+            report["cross_system_findings"] = sorted(set(map(str, cross)) & admitted)
+            if not report["cross_system_findings"]:
+                del report["cross_system_findings"]
+            for identifier in bad:
+                quarantined.append(
+                    {
+                        "section": "cross_system_findings",
+                        "dangling_id": identifier,
+                        "reason": "identifier not admitted to the report",
+                    }
+                )
+
+    paths = report.get("attack_paths")
+    if paths:
+        kept = []
+        for entry in paths:
+            ids = [str(i) for i in entry.get("finding_ids") or []]
+            text = " ".join([*ids, str(entry.get("description") or "")])
+            bad = dangling(text)
+            if bad:
+                for identifier in bad:
+                    quarantined.append(
+                        {
+                            "section": "attack_paths",
+                            "dangling_id": identifier,
+                            "reason": "identifier not admitted to the report",
+                        }
+                    )
+                continue
+            kept.append(entry)
+        if len(kept) != len(paths):
+            if kept:
+                report["attack_paths"] = kept
+            else:
+                del report["attack_paths"]
+
+    recommendations = report.get("recommendations")
+    if recommendations:
+        kept = []
+        for item in recommendations:
+            bad = dangling(str(item))
+            if bad:
+                for identifier in bad:
+                    quarantined.append(
+                        {
+                            "section": "recommendations",
+                            "dangling_id": identifier,
+                            "reason": "identifier not admitted to the report",
+                        }
+                    )
+                continue
+            kept.append(item)
+        if len(kept) != len(recommendations):
+            if kept:
+                report["recommendations"] = kept
+            else:
+                del report["recommendations"]
+
+    quarantined.sort(key=lambda q: (q["section"], q["dangling_id"]))
+    return system_review, quarantined
 
 
 def cross_system_ids(findings: list[dict[str, Any]]) -> list[str]:
@@ -512,6 +623,22 @@ def render_markdown(report: dict[str, Any], system_review: str = "") -> str:
         add(system_review.strip())
         add("")
 
+    if report.get("quarantined_sections"):
+        add("## Report Integrity")
+        add("")
+        add(
+            "The following narrative content was quarantined: it referenced finding "
+            "identifiers that are not part of this report. The omission is declared "
+            "rather than hidden; the scan exit status signals the defect."
+        )
+        add("")
+        for entry in report["quarantined_sections"]:
+            add(
+                f"- Section `{entry['section']}` omitted: referenced "
+                f"`{entry['dangling_id']}` — {entry['reason']}"
+            )
+        add("")
+
     if report.get("recommendations"):
         add("## Recommendations")
         add("")
@@ -678,6 +805,42 @@ def _render_finding(add, finding: dict[str, Any]) -> None:
         add(f"- **Compliance**: {', '.join(finding['compliance_refs'])}")
     if finding.get("tool_ref"):
         add(f"- **Reported by**: `{finding['tool_ref']}`")
+    usage = finding.get("usage") or {}
+    usage_state = usage.get("state")
+    if usage_state == "found":
+        locations = ", ".join(
+            f"`{loc['repo']}:{loc['file']}`"
+            + (f":{loc['line_start']}" if loc.get("line_start") else "")
+            + f" ({loc['kind']})"
+            for loc in usage.get("locations") or []
+        )
+        role = usage.get("role", "runtime")
+        suffix = " — development tooling only" if role == "development" else ""
+        add(f"- **Dependency usage**: found ({role}){suffix}: {locations}")
+    elif usage_state == "none-found":
+        add(
+            "- **Dependency usage**: no import, config reference, or literal dynamic "
+            "use of this package was found in the affected member's source — the "
+            "finding stands, but the exposure is conditional on the package being "
+            "exercised"
+        )
+    elif usage_state == "undetermined":
+        add(f"- **Dependency usage**: undetermined — {usage.get('reason', '')}")
+    integration = finding.get("integration") or {}
+    integration_state = integration.get("state")
+    if integration_state == "integrated":
+        hits = "; ".join(
+            f"`{e['file']}` ({e['reason']})" for e in integration.get("evidence") or []
+        )
+        add(f"- **Integration**: the configured technology is in use — {hits}")
+    elif integration_state == "no-integration-found":
+        add(
+            "- **Integration**: no SDK, dependency, import, or config integration with "
+            "the technology this rule governs was found — if unused, remove the "
+            "configuration rather than hardening it"
+        )
+    elif integration_state == "undetermined":
+        add(f"- **Integration**: undetermined — {integration.get('reason', '')}")
     add("")
     _render_excerpt_markdown(add, finding)
     add(finding["description"])
@@ -777,13 +940,21 @@ def write(
 ) -> tuple[Any, Any, Any]:
     """Write all three renderings, gated on internal consistency (FR-042).
 
-    The gate runs before anything is written: a self-inconsistent report never
-    reaches a reader. ``strict=False`` is for re-rendering historical artifacts
-    that predate these rules and cannot be regenerated.
+    Narrative reference resolution runs first (feature 014, FR-010): a section
+    referencing a finding id that is not admitted is quarantined — removed from
+    what publishes, declared in the report, and signalled via exit status. The
+    consistency gate then holds the residual invariant strictly: a reference
+    that survives quarantine is a pipeline bug, not publishable user data.
+    ``strict=False`` is for re-rendering historical artifacts that predate these
+    rules and cannot be regenerated.
     """
     from pipeline import consistency, render_html
 
-    consistency.enforce(report, strict=strict)
+    if strict:
+        system_review, quarantined = resolve_narrative_references(report, system_review)
+        if quarantined:
+            report["quarantined_sections"] = quarantined
+    consistency.enforce(report, strict=strict, system_review=system_review)
     json_path = store.write(
         f"reports/{report['scan_id']}.json", "generate_report", report, "report"
     )

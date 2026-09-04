@@ -21,6 +21,10 @@ EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_NOT_READY = 2
 EXIT_AGENT_HANDOFF = 3
+#: The report published with narrative section(s) quarantined for referencing a
+#: finding id not admitted to it (feature 014, FR-010). Artifacts exist; the
+#: defect is declared in the report itself.
+EXIT_REPORT_DEFECT = 4
 #: Operator interrupt (Ctrl-C); the shell convention for SIGINT.
 EXIT_INTERRUPTED = 130
 
@@ -322,6 +326,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     print(f"report: {result.report_path}")
     if result.warnings:
         print(f"({len(result.warnings)} coverage note(s) recorded in the report)")
+    report_payload = result.report if isinstance(result.report, dict) else {}
+    if report_payload.get("quarantined_sections"):
+        return EXIT_REPORT_DEFECT
     return EXIT_OK
 
 

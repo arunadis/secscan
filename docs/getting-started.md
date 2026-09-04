@@ -153,6 +153,25 @@ If a scan stops for any other reason, `.secscan/scan.log` holds the full trace o
 that run; its last line names the stage — and segment or tool — that was in
 progress.
 
+### Exit code 4: report published with quarantined narrative
+
+Exit code 4 is not a failure and not a stop: the report **was written** to
+`.secscan/reports/`, but a narrative section (system review, cross-system
+findings, attack paths, or recommendations) referenced a finding identifier that
+is not part of the report, so that section was omitted. The report's
+*Report Integrity* section declares what was removed and which identifier was
+dangling. Re-running with a freshly computed narrative clears it.
+
+### Reading dependency and misconfiguration findings
+
+Dependency findings carry a **usage** state: `found` (with the import/config/
+dynamic locations), `none-found` (nothing references the package — the finding
+still stands, but the impact is conditional on the package being exercised), or
+`undetermined` (with the reason). Misconfiguration findings carry an
+**integration** state: `integrated`, `no-integration-found` (no SDK/import/config
+integration with the governed technology — remove the configuration rather than
+harden it), or `undetermined`.
+
 ## 5. Tune it
 
 - Pick a profile for depth vs. speed: `secscan run --profile quick` — see

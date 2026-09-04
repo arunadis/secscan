@@ -151,6 +151,21 @@ def collect_candidate_controls(
                 "typed integration point at a trust boundary",
             )
 
+    # Feature 014 (FR-007): a framework control whose state is unassessed for a
+    # template sink (bypass present but unrelated, or coverage incomplete) is a
+    # candidate — the reasoning round may confirm it with cited facts.
+    control_state = finding.get("framework_control") or {}
+    if control_state.get("state") == "unassessed" and control_state.get("control"):
+        location = finding.get("location") or {}
+        add(
+            str(location.get("repo") or ""),
+            str(location.get("file") or ""),
+            "shipped control "
+            f"'{control_state['control']}' could not be established "
+            f"({control_state.get('unassessed_reason', 'reason not recorded')}); "
+            "confirm it neutralizes this finding before citing it",
+        )
+
     return entries[:MAX_CANDIDATE_CONTROLS]
 
 

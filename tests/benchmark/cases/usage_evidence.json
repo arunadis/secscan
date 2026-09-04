@@ -1,0 +1,18 @@
+{
+  "case_id": "seeded-dependency-usage-evidence",
+  "kind": "seeded-workspace",
+  "target": "tests/fixtures/dependency_usage.py",
+  "source_of_truth": "Ground truth declared by the fixture generator (tests/fixtures/dependency_usage.GROUND_TRUTH): the stale member pins a vulnerable package it never imports; the consumer member pins one it does. Reproduces the 20260904T085653Z-7ab7bd cross-check failure where an advisory narrative claimed exploitation for a package with no import site.",
+  "expectations": [
+    {
+      "defect_class": "dependency-coverage",
+      "assertion": "The advisory finding for a package with no import site is RETAINED but states usage 'none-found', carries confidence at or below the unproven-reachability ceiling, and its narrative is conditional rather than an established exploitation chain; the imported package's finding states usage 'found' with its import location.",
+      "baseline": "The reviewed scan narrated exploitation for node-fetch although nothing in the source imports it; dependency findings were silent on usage."
+    },
+    {
+      "defect_class": "calibration",
+      "assertion": "Usage evidence never adjusts severity in either direction and never suppresses the finding.",
+      "baseline": "Not previously possible: no usage pass existed."
+    }
+  ]
+}

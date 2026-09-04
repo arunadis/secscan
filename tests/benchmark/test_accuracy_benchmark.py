@@ -135,6 +135,166 @@ def test_defect_class_triage_correctness(tmp_path) -> None:
     assert {f["cwe"] for f in correlated} == {"CWE-862", "CWE-798"}
 
 
+def test_usage_evidence_gate(tmp_path) -> None:
+    """Feature 014 T006 (FR-001–FR-003, SC-002): usage evidence gates advisory narratives.
+
+    Encodes the 20260904 cross-check failure: an advisory narrated exploitation
+    for a package nothing imports. The stale member's finding must survive with
+    usage none-found, capped confidence, and a conditional narrative; the
+    consumer's must say found with its import location; and every dependency
+    finding in the fixture carries a usage state (SC-002 invariant).
+    """
+    from tests.fixtures import dependency_usage
+    from tests.integration.conftest import silent_responder
+
+    root = tmp_path / "usage"
+    workspace = dependency_usage.build(root)
+    write_config(
+        workspace,
+        {
+            "workspace": {
+                "members": [
+                    {"name": "stale", "path": "stale"},
+                    {"name": "consumer", "path": "consumer"},
+                ]
+            }
+        },
+    )
+    run_mod.run_scan(workspace, responder=silent_responder, full=True)
+    correlated = json.loads(
+        (workspace / ".secscan" / "findings" / "correlated.json").read_text()
+    )["payload"]["findings"]
+
+    truth = dependency_usage.GROUND_TRUTH
+    dependency = [f for f in correlated if f.get("dependency")]
+    assert dependency, "the fixture produced no dependency findings at all"
+
+    # SC-002: silence on usage is a defect for every dependency finding.
+    for finding in dependency:
+        usage = finding.get("usage") or {}
+        assert usage.get("state") in ("found", "none-found", "undetermined"), (
+            f"{finding['id']}: dependency finding is silent on usage"
+        )
+
+    for member, package in truth["advisory_packages"].items():
+        matched = [
+            f
+            for f in dependency
+            if f["dependency"]["package"] == package
+            and f["location"]["repo"] == member
+        ]
+        assert matched, f"no advisory finding for {package} in {member}"
+        usage = matched[0].get("usage") or {}
+        expected = truth["expected_usage_state"][member]
+        assert usage.get("state") == expected, f"{member}: {usage}"
+        if expected == "none-found":
+            assert matched[0]["confidence"] <= 0.5, f"{member}: confidence not capped"
+            text = (matched[0]["impact"] + matched[0]["attack_scenario"]).lower()
+            assert "no usage" in text or "no import" in text
+            assert "only if" in text, f"{member}: narrative still asserts the chain"
+        else:
+            locations = usage.get("locations") or []
+            assert locations and all(loc["kind"] for loc in locations)
+            assert any("cli.ts" in loc["file"] for loc in locations)
+
+
+def test_template_sink_escaping_gate(tmp_path) -> None:
+    """Feature 014 T016 (FR-005–FR-007): escaped template bindings engage the control.
+
+    Encodes the 20260904 cross-check failure: `[innerHTML]` under Angular's
+    sanitizer, no bypass — script execution must NOT be asserted; the variant
+    with bypassSecurityTrustHtml keeps the finding at full standing.
+    """
+    from tests.fixtures import template_escaped
+
+    def xss_responder(request) -> str:
+        payload = request.payload
+        repo = payload.get("repo", "web")
+        findings = []
+        for path in sorted(payload.get("source") or {}):
+            if not path.endswith(".html"):
+                continue
+            findings.append(
+                {
+                    "cwe": "CWE-79",
+                    "severity_score": 8.2,
+                    "confidence": 0.9,
+                    "location": {"repo": repo, "file": path, "line_start": 3},
+                    "description": "Unsanitized user content rendered via innerHTML.",
+                    "evidence": [{"repo": repo, "file": path, "reason": "[innerHTML] binding"}],
+                    "attack_scenario": "Stored script executes in a victim's browser.",
+                    "impact": "Script execution.",
+                    "recommendation": "Sanitize the bound value.",
+                    "segment_id": payload.get("segment_id"),
+                }
+            )
+        return json.dumps({"findings": findings})
+
+    for with_bypass in (False, True):
+        root = tmp_path / ("bypass" if with_bypass else "clean")
+        template_escaped.build(root, with_bypass=with_bypass)
+        write_config(root)
+        run_mod.run_scan(root, responder=xss_responder, full=True)
+        correlated = json.loads(
+            (root / ".secscan" / "findings" / "correlated.json").read_text()
+        )["payload"]["findings"]
+        xss = [f for f in correlated if f["cwe"] == "CWE-79"]
+        assert xss, f"with_bypass={with_bypass}: no CWE-79 finding produced"
+        finding = xss[0]
+        control = finding.get("framework_control") or {}
+        if with_bypass:
+            assert control.get("state") == "bypassed", control
+            assert "bypass_site" in control
+            assert finding["severity_score"] == 8.2, "credit must be withheld"
+        else:
+            assert control.get("state") == "credited", control
+            assert finding["severity_score"] == round(8.2 * 0.5, 1), finding
+            assert "not achievable" in finding["impact"], finding["impact"]
+
+
+def test_currency_merge_gate(tmp_path) -> None:
+    """Feature 014 T021 (FR-008/FR-009): one currency finding per (member, product, cycle)."""
+    from tests.fixtures.multi_member_workspace import build
+
+    workspace = build(tmp_path)
+    write_config(
+        workspace,
+        {
+            "workspace": {
+                "members": [
+                    {"name": "web", "path": "web"},
+                    {"name": "api", "path": "api"},
+                ]
+            }
+        },
+    )
+    run_mod.run_scan(workspace, responder=silent_responder_module(), full=True)
+    correlated = json.loads(
+        (workspace / ".secscan" / "findings" / "correlated.json").read_text()
+    )["payload"]["findings"]
+    currency = [
+        f
+        for f in correlated
+        if (f.get("dependency") or {}).get("signals") == ["past-eol"]
+    ]
+    web_currency = [f for f in currency if f["location"]["repo"] == "web"]
+    angular = [f for f in web_currency if f["dependency"]["product"] == "angular"]
+    assert len(angular) == 1, (
+        f"angular 9 EOL must appear exactly once for web; got {len(angular)}"
+    )
+    assert angular[0]["dependency"]["packages"] == [
+        "@angular/core",
+        "@angular/platform-browser",
+    ]
+    assert len(angular[0]["evidence"]) == 2
+
+
+def silent_responder_module():
+    from tests.integration.conftest import silent_responder
+
+    return silent_responder
+
+
 def test_defect_class_missed_detection(tmp_path) -> None:
     """FR-011/D5. Baseline: 5 verified misses across the two reference scans.
 

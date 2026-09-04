@@ -1,0 +1,13 @@
+{
+  "case_id": "seeded-currency-merge",
+  "kind": "seeded-workspace",
+  "target": "tests/fixtures/multi_member_workspace.py",
+  "source_of_truth": "Ground truth declared by the fixture: the web member pins @angular/core and @angular/platform-browser at 9.0.1 — one product, one cycle. Reproduces the 20260904T085653Z-7ab7bd cross-check finding that SEC-0004 and SEC-0009 described the same EOL condition twice.",
+  "expectations": [
+    {
+      "defect_class": "report-consistency",
+      "assertion": "The angular 9 EOL condition appears exactly once in the web member — a single currency finding listing both packages as evidence — and per-member findings remain distinct.",
+      "baseline": "The reviewed scan listed the same end-of-life condition twice under two finding identifiers (SEC-0004 and SEC-0009)."
+    }
+  ]
+}

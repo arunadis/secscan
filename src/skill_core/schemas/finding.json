@@ -516,6 +516,118 @@
         }
       }
     },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Feature 014 (FR-001-FR-003): deterministic usage evidence for dependency findings. 'none-found' never suppresses and never adjusts severity; 'undetermined' requires a reason and never reads as clean.",
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "found",
+            "none-found",
+            "undetermined"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "description": "required when state = 'undetermined'"
+        },
+        "role": {
+          "enum": [
+            "runtime",
+            "development"
+          ],
+          "description": "present when state = 'found'; development only if every location is test/build tooling"
+        },
+        "locations": {
+          "type": "array",
+          "description": "present iff state = 'found'; sorted by (repo, file, line_start, kind, role)",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "repo",
+              "file",
+              "kind",
+              "role"
+            ],
+            "properties": {
+              "repo": {
+                "type": "string"
+              },
+              "file": {
+                "type": "string"
+              },
+              "line_start": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "kind": {
+                "enum": [
+                  "import",
+                  "config",
+                  "dynamic"
+                ]
+              },
+              "role": {
+                "enum": [
+                  "runtime",
+                  "development"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "integration": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Feature 014 (FR-004): integration evidence for misconfiguration findings. 'no-integration-found' shifts remediation to removal and never suppresses; 'undetermined' requires a reason.",
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "integrated",
+            "no-integration-found",
+            "undetermined"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "description": "required when state = 'undetermined'"
+        },
+        "evidence": {
+          "type": "array",
+          "description": "present when state = 'integrated'; sorted by (repo, file, reason)",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "repo",
+              "file",
+              "reason"
+            ],
+            "properties": {
+              "repo": {
+                "type": "string"
+              },
+              "file": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
     "dependency": {
       "type": "object",
       "additionalProperties": false,
@@ -566,6 +678,28 @@
         "version_ambiguous": {
           "type": "boolean",
           "description": "a manifest exists with no lockfile, so the resolved version is ambiguous (FR-035)"
+        },
+        "packages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "feature 014 (FR-008): every package merged into a currency finding; advisory findings leave this absent"
+        },
+        "product": {
+          "type": "string",
+          "description": "feature 014: end-of-life dataset product id for currency findings"
+        },
+        "cycle": {
+          "type": "string",
+          "description": "feature 014: release cycle the currency signal applies to"
+        },
+        "signals": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "feature 014: sorted currency signals merged into this finding (currently 'past-eol')"
         },
         "audit_source": {
           "type": "string"
