@@ -1,0 +1,89 @@
+{
+  "version": "1",
+  "dataset_date": "2026-09-05",
+  "note": "Feature 015 (FR-020/FR-021). Obligations are detection contracts for the reasoning layer and verifier — described as flow patterns, phrased as potential compliance risk, never audit-ready legal wording. Adding a regime or obligation is a data edit plus a version/dataset_date bump; no pipeline stage changes.",
+  "regimes": [
+    {
+      "id": "gdpr",
+      "name": "EU General Data Protection Regulation",
+      "obligations": [
+        {
+          "id": "gdpr-consent-before-collection",
+          "title": "Consent or lawful basis before personal-data collection",
+          "summary": "A flow that stores personal data should have a consent or lawful-basis step before the collection step.",
+          "flow_patterns": ["consent-before-collection"]
+        },
+        {
+          "id": "gdpr-data-subject-deletion",
+          "title": "Data-subject erasure path",
+          "summary": "Flows managing personal data should offer a reachable deletion path for the data subject.",
+          "flow_patterns": ["data-subject-deletion-path"]
+        },
+        {
+          "id": "gdpr-cross-border-share",
+          "title": "Safeguards when personal data leaves the trust boundary",
+          "summary": "A flow moving personal data to an external system should carry a safeguard step before the share.",
+          "flow_patterns": ["regulated-data-safeguard-on-external-share"]
+        }
+      ],
+      "regulated_data_categories": [
+        {
+          "category": "personal-data",
+          "signals": ["email", "firstname", "lastname", "full_name", "address", "phone", "birthdate", "date_of_birth", "ssn", "passport"]
+        }
+      ]
+    },
+    {
+      "id": "ccpa",
+      "name": "California Consumer Privacy Act",
+      "obligations": [
+        {
+          "id": "ccpa-deletion-request",
+          "title": "Consumer deletion request path",
+          "summary": "Flows managing consumer personal information should offer a reachable deletion-request path.",
+          "flow_patterns": ["data-subject-deletion-path"]
+        },
+        {
+          "id": "ccpa-sale-share-safeguard",
+          "title": "Opt-out before selling or sharing personal information",
+          "summary": "A flow sharing personal information with a third party should carry an opt-out or consent safeguard step.",
+          "flow_patterns": ["regulated-data-safeguard-on-external-share", "consent-before-collection"]
+        }
+      ],
+      "regulated_data_categories": [
+        {
+          "category": "personal-data",
+          "signals": ["email", "firstname", "lastname", "full_name", "address", "phone", "birthdate", "date_of_birth", "ssn", "passport"]
+        },
+        {
+          "category": "financial-data",
+          "signals": ["card_number", "credit_card", "iban", "account_number", "routing_number"]
+        }
+      ]
+    },
+    {
+      "id": "hipaa",
+      "name": "US health information privacy and security standards",
+      "obligations": [
+        {
+          "id": "hipaa-phi-safeguard",
+          "title": "Safeguards around protected health information",
+          "summary": "A flow creating, reading, or transmitting health data should carry an authenticated, authorized step before PHI touches an external system or an unguarded store.",
+          "flow_patterns": ["regulated-data-safeguard-on-external-share"]
+        },
+        {
+          "id": "hipaa-minimum-necessary",
+          "title": "Minimum-necessary access to PHI",
+          "summary": "Steps reading health data should be scoped to roles with a treatment, payment, or operations need.",
+          "flow_patterns": ["minimum-necessary-role-scope"]
+        }
+      ],
+      "regulated_data_categories": [
+        {
+          "category": "health-data",
+          "signals": ["patient", "diagnosis", "medical", "prescription", "health_record", "treatment", "lab_result", "phi"]
+        }
+      ]
+    }
+  ]
+}

@@ -41,6 +41,10 @@ DEFECT_CLASSES = (
     "llm-detection",
     "supply-chain-detection",
     "triage-correctness",
+    # Feature 015: functional/business-logic gaps only visible at the flow level,
+    # and flows breaching declared regulatory obligations.
+    "business-flow",
+    "regulatory-flow",
 )
 
 KINDS = ("reviewed-real", "seeded-workspace")

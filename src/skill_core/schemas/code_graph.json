@@ -90,6 +90,25 @@
             },
             "description": "sorted, deduplicated import statements extracted from this file (feature 014, FR-001); absent when the file was not parsed"
           },
+          "data_categories": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "personal-data",
+                "health-data",
+                "financial-data"
+              ]
+            },
+            "description": "regulated-data categories detected in this file via shipped regime signal rules (feature 015, FR-022); present only on file nodes when detected"
+          },
+          "outbound_hosts": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "sorted, deduplicated outbound URL hostnames referenced by this file (feature 015); present only on file nodes, enables cross-repository business-flow stitching"
+          },
           "annotations": {
             "type": "array",
             "items": {

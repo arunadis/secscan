@@ -270,8 +270,22 @@ def enrich(facts: FileFacts, text: str) -> None:
         annotations.add("sensitive_data")
     if any(d.operation == "execute" for d in facts.data_access) or _SINK_HINTS.search(text):
         annotations.add("security_sink")
-    if re.search(r"(?i)https?://(?!localhost|127\.0\.0\.1)", text):
+    outbound = sorted(
+        {
+            match.group(1).lower()
+            for match in re.finditer(
+                r"(?i)https?://(?!localhost|127\.0\.0\.1)([a-z0-9.-]+)", text
+            )
+        }
+    )
+    if outbound:
         annotations.add("external_system")
+        facts.outbound_hosts = outbound
+    # Feature 015 (FR-022): regulated-data categories ride the shipped regime
+    # signals — deterministic, data-driven, reviewable.
+    from pipeline import data_categories
+
+    facts.data_categories = data_categories.detect_text(text)
     facts.annotations = sorted(annotations)
 
     # ---- per-symbol annotations ----------------------------------------

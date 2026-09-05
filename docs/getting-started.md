@@ -183,6 +183,13 @@ harden it), or `undetermined`.
   foreground, then `batch 1/1 ended`. Ctrl-C is safe — the next run resumes the same
   batch. For a quick scan of a small repository use `secscan run --policy interactive`.
 - Override any setting per scan: `secscan run --set budgets.max_context_tokens=8000`.
+- Opt into business-flow (functional) analysis — gaps in the *journey*, not the code:
+  `secscan run --set analysis_depth.business_flow=true`, or set
+  `business_flow.enabled: true` in config (the installed skill offers to remember
+  your answer). Optional regulatory scope via `business_flow.declared_regimes`
+  (gdpr/ccpa/hipaa) and `business_flow.applicability_mode` — see
+  [Configuration](configuration.md). Its token spend shows up as its own
+  `business_flow_analysis` line in the usage summary.
 
 ## What's next
 

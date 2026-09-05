@@ -44,10 +44,12 @@ the scan command to continue.
 0. init                    # config + environment check (first run only)
 1. discover_repo           # workspace + per-repo manifests
 2. build_code_graph        # symbols, calls, entry points, data access
+2a. business_flow_model    # business flows, only when enabled (off by default)
 3. partition_repo          # security-boundary segments
 4. build_context           # bounded, redacted context packets
 5. ingest_findings         # external scanner output (when tools present)
 6. SEGMENT ANALYSIS        # <- your reasoning, per packet
+6a. BUSINESS-FLOW ANALYSIS # <- your reasoning, per flow (only when enabled)
 7. normalize_findings      # schema enforcement + CWE/OWASP mapping
 8. verify + reproduce      # static verification, reproduction blocks
 9. correlate_findings      # dedupe, relate, group
@@ -55,6 +57,29 @@ the scan command to continue.
 11. SYSTEM REVIEW          # <- your reasoning, cross-segment
 12. generate_report        # unified report + usage summary
 ```
+
+## Before you run: the business-flow question
+
+Business-flow analysis (steps 2a/6a) finds *functional* gaps — missing enforcement
+between flow steps, skippable enforced steps, cross-role or cross-tenant transitions,
+and flows that breach declared regulatory obligations. It costs extra reasoning
+tokens, so it is **off by default** and the user decides.
+
+Before the first `run` of a project, check `.secscan/config.yaml`:
+
+- If it has `business_flow.enabled` (true or false), honor it — ask nothing.
+- If the key is absent, **ask the user** whether to run business-flow analysis for
+  this scan, and pass the answer per run with
+  `run --set analysis_depth.business_flow=true|false`.
+- Offer "remember this choice"; only if the user explicitly accepts, write
+  `business_flow.enabled: <answer>` into `.secscan/config.yaml`. If they decline,
+  write nothing and ask again next time.
+- When the user opted in, also offer the regulatory scope: declare applicable
+  regimes via `business_flow.declared_regimes` (ids from the shipped dataset; the
+  scan's flow-coverage section lists suggested candidates).
+
+A direct non-interactive `run` with the key unset simply skips flow analysis — never
+block automation on the question.
 
 Run the pipeline with the scan command (resumes automatically as needed). From
 this skill directory, put `scripts/` on `PYTHONPATH`:
@@ -114,6 +139,28 @@ pipeline will build a larger packet (next escalation level) and ask again.
 
 Because requests and responses are files, a large scan can span **multiple agent
 sessions**: answer what you can, re-run, repeat.
+
+## Your part: business-flow analysis (step 6a)
+
+When flow analysis is enabled, the scan exits with status 3 and leaves
+`flow-<flow-hash>-l<level>` requests in `.secscan/handoff/requests/` — one per
+reconstructed business flow. For **each**:
+
+1. Read the request — `context_packet.flow` carries the journey: actor posture,
+   ordered steps (repo-attributed node ids, operation kinds, security annotations,
+   regulated-data categories), any partial-flow gap reasons, and related data flows.
+2. Follow `prompts/business_flow.md`: walk the steps and, at **every** step, ask who
+   is allowed to be here and whether that is enforced. When the packet lists
+   evaluated regimes, also evaluate the flow against each named obligation.
+3. Answer conforming to `schemas/flow_answer.json` — a closed `assessment`
+   (`clean` | `gap` | `violation` | `undetermined`); `undetermined` always names its
+   reasons. Findings carry `missing_check` and `compromise` (who gains what they are
+   not allowed to do), plus `regulatory_refs` for obligation breaches. Regulatory
+   findings describe *potential compliance risk* with evidence — never a legal
+   determination.
+4. Write the answer to `.secscan/handoff/responses/<request-id>.json` and re-run. An
+   `undetermined` assessment escalates to a deeper packet (up to the profile
+   ceiling), exactly like segment analysis; never guess to avoid escalation.
 
 ## Your part: finding triage (step 10)
 

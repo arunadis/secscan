@@ -58,7 +58,9 @@ src/
 ├── pipeline/      deterministic scan stages + payload CLI; tooling/ drives external
 │                  scanners (provision, run, cross-check); triage* modules run the
 │                  post-correlation finding-triage round (packets, verdict gates,
-│                  citation re-verification, verdict application, user declarations)
+│                  citation re-verification, verdict application, user declarations);
+│                  business_flow.py runs the opt-in flow reconstruction +
+│                  analysis round (feature 015)
 ├── config/        config loading, strict validation, profiles, execution mode
 └── profiles/      built-in scan profiles as data
 tests/

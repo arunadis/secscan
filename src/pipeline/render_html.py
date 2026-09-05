@@ -225,6 +225,41 @@ def _render_finding(add, finding: dict[str, Any]) -> None:
     )
     if finding.get("compliance_refs"):
         add(f'<li><strong>Compliance</strong>: {_esc(", ".join(finding["compliance_refs"]))}</li>')
+    if finding.get("flow_category"):
+        # Feature 015 (FR-014): the flow narrative rides inside the finding.
+        narrative = finding.get("flow_narrative") or {}
+        label = (
+            "Regulatory breach in business flow"
+            if finding["flow_category"] == "regulatory-violation"
+            else "Business-flow gap"
+        )
+        add(
+            f'<li><strong>{label}</strong>: <code>{_esc(str(finding.get("flow_ref", "?")))}</code>'
+            f' — {_esc(str(narrative.get("name", "")))}</li>'
+        )
+        steps = narrative.get("steps") or []
+        if steps:
+            add("<li><strong>Steps</strong>:<ol>")
+            for step in steps:
+                detail = f" — {_esc(str(step['detail']))}" if step.get("detail") else ""
+                add(f'<li><code>{_esc(str(step["node_id"]))}</code>{detail}</li>')
+            add("</ol></li>")
+        add(
+            "<li><strong>Missing/violated check</strong>: "
+            f'{_esc(str(narrative.get("missing_check", "")))}</li>'
+        )
+        add(
+            "<li><strong>How security is compromised</strong>: "
+            f'{_esc(str(narrative.get("compromise", "")))}</li>'
+        )
+        if finding.get("regulatory_refs"):
+            refs = ", ".join(
+                f"{ref['regime']}: {ref['obligation']}"
+                + (f" (detected via: {ref['basis']})" if ref.get("basis") else "")
+                for ref in finding["regulatory_refs"]
+            )
+            add(f'<li><strong>Regulations</strong> (potential compliance risk, not legal '
+                f'advice): {_esc(refs)}</li>')
     if finding.get("tool_ref"):
         add(f'<li><strong>Reported by</strong>: <code>{_esc(finding["tool_ref"])}</code></li>')
     usage = finding.get("usage") or {}
@@ -415,6 +450,46 @@ def _render_coverage(add, report: dict[str, Any]) -> None:
             )
         else:
             add("<li>Finding triage: disabled (profile/config)</li>")
+    flow_cov = report.get("flow_coverage")
+    if flow_cov:
+        # Feature 015 (FR-014): the flow coverage ledger mirrors the Markdown
+        # coverage section — same declarations, same numbers.
+        applicability = flow_cov.get("applicability") or {}
+        add(
+            f'<li>Business flows: {_esc(len(flow_cov.get("reconstructed") or []))} '
+            f'reconstructed · {_esc(len(flow_cov.get("analyzed") or []))} analyzed · '
+            f'{_esc(len(flow_cov.get("partial") or []))} partial · '
+            f'{_esc(len(flow_cov.get("unanalyzed") or []))} unanalyzed</li>'
+        )
+        evaluated = ", ".join(applicability.get("evaluated_regimes") or []) or "none"
+        add(
+            f'<li>Regime applicability: {_esc(applicability.get("mode", "hybrid"))} mode; '
+            f'evaluated: {_esc(evaluated)}</li>'
+        )
+        if applicability.get("skipped_reason"):
+            add(f'<li>Obligation evaluation skipped: {_esc(applicability["skipped_reason"])}</li>')
+        for entry in flow_cov.get("partial") or []:
+            add(
+                f'<li>Partial flow <code>{_esc(entry["flow_id"])}</code>: '
+                f'{_esc(", ".join(entry["gap_reasons"]))}</li>'
+            )
+        for entry in flow_cov.get("unanalyzed") or []:
+            add(
+                f'<li>Unanalyzed flow <code>{_esc(entry["flow_id"])}</code>: '
+                f'{_esc(entry["reason"])}</li>'
+            )
+        for entry in flow_cov.get("undetermined") or []:
+            add(
+                f'<li>Undetermined flow <code>{_esc(entry["flow_id"])}</code>: '
+                f'{_esc("; ".join(entry["reasons"]))}</li>'
+            )
+        for entry in flow_cov.get("candidate_regimes") or []:
+            add(
+                f'<li>Candidate regime (suggested, not evaluated): '
+                f'<code>{_esc(entry["regime"])}</code> — detected '
+                f'{_esc(", ".join(entry["detected_categories"]))}; declare it in '
+                "business_flow.declared_regimes to evaluate</li>"
+            )
     for limitation in coverage.get("tool_limitations", []):
         # Feature 008 (FR-009): external tooling the report implicitly lacks,
         # named with its reason — absence never reads as clean.

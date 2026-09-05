@@ -166,6 +166,26 @@ def collect_candidate_controls(
             "confirm it neutralizes this finding before citing it",
         )
 
+    # Feature 015 (FR-011): flow findings are triaged with their own steps as
+    # first-class evidence; the obligation under review accompanies violations.
+    narrative = finding.get("flow_narrative") or {}
+    for step in narrative.get("steps") or []:
+        node_id = str(step.get("node_id") or "")
+        if "#" in node_id and ":" in node_id:
+            repo, rest = node_id.split(":", 1)
+            file, _, symbol = rest.partition("#")
+            add(repo, file, "step of the business flow this finding belongs to",
+                symbol or None)
+    for ref in finding.get("regulatory_refs") or []:
+        location = finding.get("location") or {}
+        add(
+            str(location.get("repo") or ""),
+            str(location.get("file") or ""),
+            "obligation under review: "
+            f"{ref.get('regime', '?')} — {ref.get('obligation', '?')}"
+            + (f" (detected via: {ref['basis']})" if ref.get("basis") else ""),
+        )
+
     return entries[:MAX_CANDIDATE_CONTROLS]
 
 

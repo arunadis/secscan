@@ -28,6 +28,9 @@ def _root_cause_key(finding: dict[str, Any]) -> tuple:
         # root causes (e.g. separate excessive-agency grants in one file);
         # `tool_ref` is absent on model findings, which merge as before.
         finding.get("tool_ref"),
+        # feature 015 (FR-011): a flow finding and a code-level finding are the
+        # same weakness seen from two lenses — related, never duplicate-collapsed.
+        finding.get("flow_ref"),
     )
 
 
@@ -70,6 +73,33 @@ def correlate(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     _link_systemic(canonical)
     return sorted(canonical, key=lambda f: f["id"])
+
+
+def _link_flow_findings(findings: list[dict[str, Any]]) -> None:
+    """Relate flow findings to code-level findings on the same weakness (feature
+    015, FR-011): one issue seen from both angles, never double-counted. Both
+    findings stay; the link is what the reader follows."""
+    flow_findings = [f for f in findings if f.get("flow_ref")]
+    code_findings = [f for f in findings if not f.get("flow_ref")]
+    for flow_finding in flow_findings:
+        location = flow_finding.get("location") or {}
+        for code_finding in code_findings:
+            code_location = code_finding.get("location") or {}
+            if flow_finding["cwe"] != code_finding["cwe"]:
+                continue
+            if location.get("repo") != code_location.get("repo"):
+                continue
+            if location.get("file") != code_location.get("file"):
+                continue
+            reason = (
+                "same weakness seen at the code level and at the business-flow level"
+            )
+            flow_finding.setdefault("relationships", []).append(
+                {"target_id": code_finding["id"], "type": "related", "reason": reason}
+            )
+            code_finding.setdefault("relationships", []).append(
+                {"target_id": flow_finding["id"], "type": "related", "reason": reason}
+            )
 
 
 def _link_systemic(findings: list[dict[str, Any]]) -> None:
@@ -115,6 +145,7 @@ def finalize(
     manifest: dict[str, Any] | None = None,
     requested_cwes: set[str] | None = None,
     segments: list[dict[str, Any]] | None = None,
+    business_flows: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     """Resolve → applicability → verify → correlate → calibrate → reproduce.
 
@@ -142,8 +173,11 @@ def finalize(
         deduped, graph, profiles or {}, workspace, requested_cwes, segments
     )
 
-    kept, disproven = verify.apply_verification(deduped, graph, flows)
+    kept, disproven = verify.apply_verification(
+        deduped, graph, flows, business_flows=business_flows
+    )
     correlated = correlate(kept)
+    _link_flow_findings(correlated)
 
     # Usage evidence precedes controls/calibration: a none-found advisory caps
     # confidence and reframes its narrative there (feature 014, FR-001-FR-003).

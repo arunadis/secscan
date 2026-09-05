@@ -22,6 +22,7 @@ from pipeline import (
     architecture,
     build_code_graph,
     build_context,
+    business_flow,
     compound,
     correlate_findings,
     dataflow,
@@ -197,6 +198,30 @@ def run_scan(
         run=lambda: build_code_graph.run(store, workspace),
         **stage_kwargs,
     )
+
+    # --------------------------------- stage 2b: business flows (feature 015)
+    # Deterministic reconstruction, opt-in only: disabled resolves to a skip
+    # notice and no artifact (FR-001/FR-004/FR-005).
+    flow_enabled = business_flow.enabled_for(active_profile, config)
+    flows_doc: dict[str, Any] = {"flows": [], "coverage": {}}
+    if flow_enabled:
+        flows_doc = _stage(
+            store,
+            business_flow.STAGE_MODEL,
+            resume_key=hash_document(
+                {
+                    "graph": hash_document(graph),
+                    "workspace": hash_document(workspace),
+                    "config": dict(config.raw.get("business_flow") or {}),
+                    "regimes": business_flow.regimes_version(),
+                }
+            ),
+            artifact=business_flow.ARTIFACT,
+            run=lambda: business_flow.build_flows(store, workspace, graph, config=config),
+            **stage_kwargs,
+        )
+    else:
+        reporter.stage_skipped(business_flow.STAGE_MODEL, "disabled by profile/config")
 
     # -------------------------------------------------- stage 3: partition
     graph_key = hash_document(graph)
@@ -572,6 +597,108 @@ def run_scan(
 
     warnings.extend(builder.warnings)
 
+    # ------------------------- business-flow analysis round (feature 015)
+    # One bounded request per reconstructed flow; findings join raw_findings
+    # BEFORE correlation so they inherit normalization, applicability,
+    # verification, correlation, and triage like any other finding (FR-011).
+    if flow_enabled and flows_doc["flows"]:
+        analysis_key = hash_document(
+            {
+                "flows": [f["id"] for f in flows_doc["flows"]],
+                "config": dict(config.raw.get("business_flow") or {}),
+                "regimes": business_flow.regimes_version(),
+                "max_level": active_profile.analysis_depth.max_escalation_level,
+            }
+        )
+        if store.should_skip(business_flow.STAGE_ANALYSIS, analysis_key) and store.exists(
+            business_flow.FINDINGS_ARTIFACT
+        ):
+            saved = store.read(business_flow.FINDINGS_ARTIFACT)
+            flow_findings = list(saved.get("findings") or [])
+            raw_findings.extend(flow_findings)
+            for flow_id in saved.get("unanswered", []):
+                pending.append(f"flow:{flow_id}")
+            reporter.stage_reused(business_flow.STAGE_ANALYSIS, analysis_key)
+        else:
+            store.mark_running(business_flow.STAGE_ANALYSIS)
+            reporter.stage_started(business_flow.STAGE_ANALYSIS)
+            applicability_resolution = business_flow.resolve_applicability(config, flows_doc)
+            runner = business_flow.FlowRound(
+                client=client,
+                usage=usage,
+                budget=budget,
+                max_level=active_profile.analysis_depth.max_escalation_level,
+                regime_obligations=applicability_resolution["obligations"],
+                regime_basis=(
+                    applicability_resolution["basis"]
+                    if applicability_resolution["mode"] == "inferred-only"
+                    else {}
+                ),
+            )
+            total_flows = len(flows_doc["flows"])
+            flow_result = business_flow.FlowRoundResult()
+            for index, flow in enumerate(flows_doc["flows"]):
+                reporter.segment_started(
+                    business_flow.STAGE_ANALYSIS, flow["id"], index + 1, total_flows
+                )
+                single = runner.run([flow])
+                flow_result.findings.extend(single.findings)
+                flow_result.assessments.update(single.assessments)
+                flow_result.undetermined.update(single.undetermined)
+                flow_result.pending.extend(single.pending)
+                reporter.segment_done(
+                    business_flow.STAGE_ANALYSIS, flow["id"], index + 1, total_flows
+                )
+            raw_findings.extend(flow_result.findings)
+            # Coverage is the honest-uncertainty ledger (FR-010): answered flows,
+            # pending flows, and undetermined assessments are all declared.
+            flows_doc["coverage"]["analyzed"] = sorted(
+                flow_result.assessments, key=str
+            )
+            flows_doc["coverage"]["unanalyzed"] = [
+                {"flow_id": fid, "reason": "handoff-pending"}
+                for fid in sorted(flow_result.pending)
+            ] + [
+                {"flow_id": fid, "reason": reason}
+                for fid, reason in sorted(flow_result.oversized.items())
+            ]
+            flows_doc["coverage"]["undetermined"] = [
+                {"flow_id": fid, "reasons": reasons}
+                for fid, reasons in sorted(flow_result.undetermined.items())
+            ]
+            for fid, reasons in sorted(flow_result.undetermined.items()):
+                _warn(
+                    f"{fid}: flow assessment undetermined ({'; '.join(reasons)})",
+                    stage=business_flow.STAGE_ANALYSIS,
+                    subject=fid,
+                )
+            store.write(
+                business_flow.FINDINGS_ARTIFACT,
+                business_flow.STAGE_ANALYSIS,
+                {
+                    "findings": flow_result.findings,
+                    "assessments": flow_result.assessments,
+                    "undetermined": flow_result.undetermined,
+                    "unanswered": flow_result.pending,
+                },
+            )
+            store.write(
+                business_flow.ARTIFACT,
+                business_flow.STAGE_MODEL,
+                flows_doc,
+                schema="business_flow",
+            )
+            store.mark_done(
+                business_flow.STAGE_ANALYSIS,
+                analysis_key,
+                [business_flow.ARTIFACT, business_flow.FINDINGS_ARTIFACT],
+            )
+            reporter.stage_done(business_flow.STAGE_ANALYSIS)
+            for fid in sorted(flow_result.pending):
+                pending.append(f"flow:{fid}")
+    elif not flow_enabled:
+        reporter.stage_skipped(business_flow.STAGE_ANALYSIS, "disabled by profile/config")
+
     if pending:
         store.save_state()
         handoff = AgentHandoff(pending)
@@ -606,6 +733,7 @@ def run_scan(
             workspace=workspace,
             manifest=primary_manifest,
             segments=segments,
+            business_flows=flows_doc if flow_enabled else None,
         )
         correlate_findings.write(store, *result)
         return result
@@ -721,6 +849,7 @@ def run_scan(
             suppressions=suppressions,
             scan_root=scan_root,
             triage_summary=triage_summary,
+            flow_coverage=flows_doc.get("coverage") if flow_enabled else None,
         )
         paths = generate_report.write(store, built, system_review)
         store.write("usage.json", "generate_report", usage.to_dict(), "usage")
@@ -757,6 +886,8 @@ def run_scan(
 #: analysis result: a change in depth changes the findings, which changes their
 #: applicability conclusion, calibration, and reproduction blocks.
 _ANALYSIS_STAGES = (
+    "business_flow_model",
+    "business_flow_analysis",
     "partition_repo",
     "build_context",
     "segment_analysis",

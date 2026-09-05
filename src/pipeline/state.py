@@ -51,10 +51,15 @@ BATCH_LEDGER_META = "analysis_batches"
 STAGES: tuple[str, ...] = (
     "discover_repo",
     "build_code_graph",
+    # Feature 015: deterministic flow reconstruction rides on the code graph, and
+    # the bounded reasoning round runs once per flow before findings are
+    # correlated, so flow findings inherit every downstream pass.
+    "business_flow_model",
     "partition_repo",
     "build_context",
     "ingest_findings",
     "segment_analysis",
+    "business_flow_analysis",
     "normalize_findings",
     "applicability",
     "verify_findings",

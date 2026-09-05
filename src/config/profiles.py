@@ -40,6 +40,11 @@ class AnalysisDepth:
     #: Whether the finding-triage round runs (feature 013); custom profiles that
     #: omit the key keep their previous behavior (no triage).
     finding_triage: bool = False
+    #: Whether the business-flow analysis round runs (feature 015). Tri-state:
+    #: ``None`` = profile silent (config decides, default off); an explicit
+    #: bool takes precedence over the config setting. Built-ins omit the key so
+    #: ``business_flow.enabled: true`` in config works with the default profile.
+    business_flow: bool | None = None
 
     @property
     def all_domains(self) -> bool:
@@ -52,6 +57,7 @@ class AnalysisDepth:
             "ingest_scanners": self.ingest_scanners,
             "system_review": self.system_review,
             "finding_triage": self.finding_triage,
+            "business_flow": self.business_flow,
         }
 
 
@@ -119,10 +125,15 @@ class ScanProfile:
         """Identity of the analysis depth, used to detect shallow->deep switches."""
         depth = self.analysis_depth
         domains = "all" if depth.all_domains else ",".join(sorted(depth.domains))
-        return (
+        key = (
             f"{domains}|L{depth.max_escalation_level}|sys={int(depth.system_review)}"
             f"|triage={int(depth.finding_triage)}"
         )
+        # Feature 015: only an explicit profile flag changes the depth identity, so
+        # upgrading the tool never forces a re-analysis of previously scanned projects.
+        if depth.business_flow is not None:
+            key += f"|flow={int(depth.business_flow)}"
+        return key
 
 
 def _resolve_domains(raw: Any) -> tuple[str, ...]:
@@ -223,6 +234,11 @@ def resolve(
             ingest_scanners=bool(depth_raw.get("ingest_scanners", True)),
             system_review=bool(depth_raw.get("system_review", True)),
             finding_triage=bool(depth_raw.get("finding_triage", False)),
+            business_flow=(
+                None
+                if depth_raw.get("business_flow") is None
+                else bool(depth_raw["business_flow"])
+            ),
         ),
         report_thresholds=ReportThresholds(
             min_severity_band=band,

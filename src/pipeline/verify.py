@@ -52,12 +52,25 @@ class Verdict:
 class Verifier:
     """Assigns a verification verdict to each finding."""
 
-    def __init__(self, graph: dict[str, Any], flows: list[Flow]) -> None:
+    def __init__(
+        self,
+        graph: dict[str, Any],
+        flows: list[Flow],
+        business_flows: dict[str, Any] | None = None,
+    ) -> None:
         self.graph = graph
         self.flows = flows
         self.nodes = {node["id"]: node for node in graph["nodes"]}
+        self.business_flows = {
+            str(flow["id"]): flow
+            for flow in (business_flows or {}).get("flows", [])
+        }
 
     def verify(self, finding: dict[str, Any]) -> Verdict:
+        # Feature 015, FR-017: flow findings use path-based verdicts over the
+        # reconstructed business flow, never a source-to-sink trace.
+        if finding.get("flow_ref"):
+            return self.verify_flow_finding(finding)
         location = finding["location"]
         repo = location.get("repo", "")
         path = location.get("file", "")
@@ -90,6 +103,92 @@ class Verifier:
         )
 
     # ----------------------------------------------------------- internals
+
+    def verify_flow_finding(self, finding: dict[str, Any]) -> Verdict:
+        """Path-based verdict for a flow finding (feature 015, FR-017).
+
+        *verified*   - a concrete traversable step path reaches the privileged
+                       operation without the missing/violated check anywhere on
+                       the way, and the flow's actor/posture are determined
+        *plausible*  - the path exists, but the flow is partial or some state
+                       along it is undetermined (never grounds for suppression)
+        *disproven*  - the missing check is present on the path after all
+        """
+        flow = self.business_flows.get(str(finding.get("flow_ref")))
+        if flow is None:
+            return Verdict(
+                status="plausible",
+                gap="the referenced business flow is absent from the flow model",
+            )
+        steps = list(flow.get("steps") or [])
+        target_index = self._privileged_step(finding, steps)
+        if target_index is None:
+            return Verdict(
+                status="plausible",
+                gap="the privileged step of the flow could not be identified "
+                "from the evidence",
+                path=tuple(self._label(step["node_id"]) for step in steps),
+            )
+        route = steps[: target_index + 1]
+        labels = tuple(self._label(step["node_id"]) for step in route)
+
+        missing = str(
+            (finding.get("flow_narrative") or {}).get("missing_check", "")
+        ).lower()
+        # A role/permission gap is only disproven by an authorization check;
+        # an identity gap also by authentication.
+        if any(
+            word in missing
+            for word in ("role", "staff", "admin", "authoriz", "permiss", "tenant")
+        ):
+            wants = ("authorization_required",)
+        else:
+            wants = ("authorization_required", "authentication_required")
+        gated = any(
+            hint in set(step.get("annotations") or []) for step in route for hint in wants
+        )
+        if gated:
+            return Verdict(status="disproven", path=labels)
+
+        reasons = [str(r) for r in flow.get("gap_reasons") or []]
+        actor = flow.get("actor") or {}
+        if actor.get("determination") == "undetermined":
+            reasons.append("actor-undetermined")
+        if flow.get("partial") or actor.get("determination") == "undetermined":
+            return Verdict(
+                status="plausible",
+                gap="flow is partial or undetermined: " + "; ".join(sorted(set(reasons))),
+                path=labels,
+            )
+        return Verdict(status="verified", path=labels)
+
+    @staticmethod
+    def _privileged_step(finding: dict[str, Any], steps: list[dict[str, Any]]) -> int | None:
+        """Index of the step the finding's location pins down (or the flow's
+        last effective operation when the location names no step).
+
+        A symbol, when present, pins exactly; otherwise the *last* step at the
+        location — the deepest point of the journey in that file, i.e. the most
+        privileged operation the path reaches there.
+        """
+        loc = finding.get("location") or {}
+        file = str(loc.get("file") or "")
+        symbol = loc.get("symbol")
+        matched: int | None = None
+        for index, step in enumerate(steps):
+            node_id = str(step["node_id"])
+            path_part = node_id.split("#", 1)[0].split(":", 1)[-1]
+            if not file or path_part != file:
+                continue
+            if symbol and node_id.rsplit("#", 1)[-1] == symbol:
+                return index
+            matched = index
+        if matched is not None:
+            return matched
+        for index in range(len(steps) - 1, -1, -1):
+            if steps[index]["operation"] in ("mutation", "terminal", "external-call"):
+                return index
+        return None
 
     def _label(self, node_id: str) -> str:
         node = self.nodes.get(node_id)
@@ -173,10 +272,13 @@ class Verifier:
 
 
 def apply_verification(
-    findings: list[dict[str, Any]], graph: dict[str, Any], flows: list[Flow]
+    findings: list[dict[str, Any]],
+    graph: dict[str, Any],
+    flows: list[Flow],
+    business_flows: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Attach verdicts; returns (kept, disproven)."""
-    verifier = Verifier(graph, flows)
+    verifier = Verifier(graph, flows, business_flows=business_flows)
     kept: list[dict[str, Any]] = []
     disproven: list[dict[str, Any]] = []
     for finding in findings:

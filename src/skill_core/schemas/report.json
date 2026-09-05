@@ -143,6 +143,10 @@
         "type": "string"
       }
     },
+    "flow_coverage": {
+      "type": "object",
+      "description": "feature 015 (FR-014): the business-flow coverage ledger — reconstructed/analyzed/partial/unanalyzed flows and regime applicability; present only when the flow-analysis round ran"
+    },
     "coverage": {
       "type": "object",
       "required": [

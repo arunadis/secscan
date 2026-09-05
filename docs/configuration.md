@@ -294,6 +294,40 @@ Profiles gate the round: `quick` skips it; `full` and `audit` run it
 (`analysis_depth.finding_triage`). Same round in every execution mode —
 agent-mediated handoff, interactive endpoint, or provider batch.
 
+## Business-flow analysis
+
+```yaml
+business_flow:
+  enabled: true             # absent = unset: the installed skill asks once and
+                            # offers to remember; false = off (the default everywhere)
+  applicability_mode: hybrid  # hybrid | declared-only | inferred-only
+  declared_regimes: [gdpr]    # ids from the shipped regime dataset (gdpr, ccpa, hipaa)
+```
+
+Feature 015 adds an opt-in round that reasons over reconstructed business flows —
+whole journeys, not code units — to find functional gaps: steps reachable without
+the authorization earlier steps establish, enforced steps that can be skipped, and
+cross-role or cross-tenant transitions. Off by default in every profile; enable it
+per profile (`analysis_depth.business_flow`), per project (the config key), or per
+scan (`--set analysis_depth.business_flow=true`). Env overrides:
+`SECSCAN_BUSINESS_FLOW_ENABLED`, `SECSCAN_BUSINESS_FLOW_APPLICABILITY_MODE`,
+`SECSCAN_BUSINESS_FLOW_DECLARED_REGIMES` (comma-separated).
+
+Regime applicability (FR-022/FR-023):
+
+- **hybrid** (default) — declared regimes are evaluated; deterministically detected
+  regulated-data categories additionally raise *candidate* regimes, which appear in
+  the report's flow coverage as suggested-but-not-evaluated until you declare them.
+- **declared-only** — only `declared_regimes` are evaluated; nothing is inferred.
+- **inferred-only** — detected categories select and evaluate regimes; each such
+  finding states its detection basis.
+
+Regulatory-violation findings are ordinary flow findings in the ranked list: they
+name the regime and the specific obligation, describe the *potential* compliance
+risk with evidence (never a legal determination), and pass the same path-based
+verification and triage gates as every other finding. Undeclared or undetermined
+states show up as declared coverage — never as silence and never as "clean".
+
 ## External tooling
 
 ```yaml

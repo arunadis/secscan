@@ -339,6 +339,7 @@ def build_report(
     suppressions: list[dict[str, Any]] | None = None,
     scan_root: Any | None = None,
     triage_summary: dict[str, Any] | None = None,
+    flow_coverage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     reported = admitted(findings, profile)
     for finding in reported:
@@ -444,6 +445,11 @@ def build_report(
         report["suppressions"] = report_suppressions
     if awaiting:
         report["awaiting_verification"] = sorted(awaiting, key=lambda a: a["finding_id"])
+    if flow_coverage:
+        # Feature 015 (FR-014): when the business-flow round ran, its coverage
+        # ledger is declared in the report — analyzed flows, partial flows with
+        # reasons, and candidate regimes never read as clean by omission.
+        report["flow_coverage"] = flow_coverage
     cross = cross_system_ids(reported)
     if cross:
         report["cross_system_findings"] = cross
@@ -702,6 +708,43 @@ def render_markdown(report: dict[str, Any], system_review: str = "") -> str:
                 f"{triage_cov.get('adjudicated', 0)} adjudicated); "
                 f"{triage_cov.get('mode_note', '')}".rstrip()
             )
+    flow_cov = report.get("flow_coverage")
+    if flow_cov:
+        add("")
+        add("### Business Flows")
+        add("")
+        applicability = flow_cov.get("applicability") or {}
+        add(
+            f"- Flows reconstructed: {len(flow_cov.get('reconstructed') or [])} · "
+            f"analyzed: {len(flow_cov.get('analyzed') or [])} · "
+            f"partial: {len(flow_cov.get('partial') or [])} · "
+            f"unanalyzed: {len(flow_cov.get('unanalyzed') or [])}"
+        )
+        add(
+            "- Regime applicability: "
+            f"{applicability.get('mode', 'hybrid')} mode; "
+            "evaluated: "
+            f"{', '.join(applicability.get('evaluated_regimes') or []) or 'none'}"
+        )
+        if applicability.get("skipped_reason"):
+            add(f"- Obligation evaluation skipped: {applicability['skipped_reason']}")
+        for entry in flow_cov.get("partial") or []:
+            reasons = ", ".join(entry["gap_reasons"])
+            add(f"- Partial flow `{entry['flow_id']}`: {reasons}")
+        for entry in flow_cov.get("unanalyzed") or []:
+            add(f"- Unanalyzed flow `{entry['flow_id']}`: {entry['reason']}")
+        for entry in flow_cov.get("undetermined") or []:
+            add(
+                f"- Undetermined flow `{entry['flow_id']}`: "
+                + "; ".join(entry["reasons"])
+            )
+        for entry in flow_cov.get("candidate_regimes") or []:
+            cats = ", ".join(entry["detected_categories"])
+            add(
+                f"- Candidate regime (suggested, not evaluated): "
+                f"`{entry['regime']}` — detected {cats}; declare it in "
+                "business_flow.declared_regimes to evaluate"
+            )
         else:
             add("- Finding triage: disabled (profile/config)")
     for limitation in coverage.get("tool_limitations", []):
@@ -803,6 +846,28 @@ def _render_finding(add, finding: dict[str, Any]) -> None:
         add(f"- **Triage incomplete**: {finding['triage_unresolved']['reason']}")
     if finding.get("compliance_refs"):
         add(f"- **Compliance**: {', '.join(finding['compliance_refs'])}")
+    if finding.get("flow_category"):
+        # Feature 015 (FR-008/FR-014): the flow narrative rides inside the finding
+        # — steps as ordered evidence, never dressed as a source-to-sink trace.
+        narrative = finding.get("flow_narrative") or {}
+        label = (
+            "Regulatory breach in business flow"
+            if finding["flow_category"] == "regulatory-violation"
+            else "Business-flow gap"
+        )
+        add(f"- **{label}**: `{finding.get('flow_ref', '?')}` — {narrative.get('name', '')}")
+        for index, step in enumerate(narrative.get("steps") or [], start=1):
+            detail = f" — {step['detail']}" if step.get("detail") else ""
+            add(f"  - step {index}: `{step['node_id']}`{detail}")
+        add(f"- **Missing/violated check**: {narrative.get('missing_check', '')}")
+        add(f"- **How security is compromised**: {narrative.get('compromise', '')}")
+        if finding.get("regulatory_refs"):
+            refs = ", ".join(
+                f"{ref['regime']}: {ref['obligation']}"
+                + (f" (detected via: {ref['basis']})" if ref.get("basis") else "")
+                for ref in finding["regulatory_refs"]
+            )
+            add(f"- **Regulations (potential compliance risk, not legal advice)**: {refs}")
     if finding.get("tool_ref"):
         add(f"- **Reported by**: `{finding['tool_ref']}`")
     usage = finding.get("usage") or {}

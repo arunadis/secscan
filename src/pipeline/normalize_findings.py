@@ -197,6 +197,37 @@ class FindingNormalizer:
             finding["tool_ref"] = str(raw["tool_ref"])
         if segment_id or raw.get("segment_id"):
             finding["segment_id"] = str(raw.get("segment_id") or segment_id)
+
+        # Feature 015: flow findings carry an all-or-nothing trio, and a
+        # regulatory-violation finding MUST bind at least one regime obligation.
+        flow_keys = [k for k in ("flow_category", "flow_ref", "flow_narrative") if raw.get(k)]
+        if flow_keys and len(flow_keys) < 3:
+            missing = sorted({"flow_category", "flow_ref", "flow_narrative"} - set(flow_keys))
+            raise ValueError(
+                "flow finding requires flow_category, flow_ref and flow_narrative "
+                f"together (missing: {missing})"
+            )
+        if flow_keys:
+            finding["flow_category"] = str(raw["flow_category"])
+            finding["flow_ref"] = str(raw["flow_ref"])
+            finding["flow_narrative"] = raw["flow_narrative"]
+            if finding["flow_category"] not in ("flow-gap", "regulatory-violation"):
+                raise ValueError(f"unknown flow_category {finding['flow_category']!r}")
+        if raw.get("regulatory_refs"):
+            finding["regulatory_refs"] = [
+                {
+                    "regime": str(ref["regime"]),
+                    "obligation": str(ref["obligation"]),
+                    **({"basis": str(ref["basis"])} if ref.get("basis") else {}),
+                }
+                for ref in raw["regulatory_refs"]
+            ]
+        if finding.get("flow_category") == "regulatory-violation" and not finding.get(
+            "regulatory_refs"
+        ):
+            raise ValueError(
+                "regulatory-violation findings MUST name regime and obligation (FR-019)"
+            )
         for optional in (
             "verification",
             "reproduction",

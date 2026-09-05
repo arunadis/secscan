@@ -18,7 +18,9 @@ tooling (provision, run, cross-check) is built per spec 008, endpoint
 scheduling (provider batch, off-peak windows) is built per feature 012, the
 post-correlation finding-triage round is built per feature 013, and report
 accuracy hardening (dependency usage evidence, template-control credit,
-currency merge, dangling-reference quarantine) is built per feature 014 — see
+currency merge, dangling-reference quarantine) is built per feature 014, and
+opt-in business-flow (functional) analysis with regulatory-obligation evaluation
+is built per feature 015 — see
 [Roadmap](#roadmap). Multi-repo workspaces scan end to end today: cross-repo
 graph edges, cross-member applicability, and a workspace-wide cross-boundary
 review are built and tested; the still-open cross-repo items are
@@ -109,11 +111,13 @@ repository/workspace
         ▼
 1. discover      manifest: languages, frameworks, modules, entry points, data stores
 2. code graph    tree-sitter → symbols, calls, routes, DB access, trust annotations
+2b. flows        business flows reconstructed (opt-in; off by default — feature 015)
 3. partition     segments along security boundaries — never by line count
 4. context       bounded packets, secrets redacted, token budget enforced
         │  bounded LLM reasoning
         ▼
 5. analyze       per segment, only the relevant vulnerability domains
+5b. flow round   per reconstructed business flow (only when 015 is enabled)
         │  deterministic again
         ▼
 6. normalize     schema enforcement + CWE/OWASP mapping
@@ -198,6 +202,13 @@ scanners:
 tooling:                          # external security tools (spec 008)
   install: ask                    # never | ask | all — consent default for init
   timeout_s: 120                  # per-tool wall-clock ceiling during analysis
+
+# business_flow:                    # functional/business-logic analysis (feature 015)
+#   enabled: true                 # absent = unset: the skill asks once and offers
+#                                 # to remember; false = off
+#   applicability_mode: hybrid    # hybrid | declared-only | inferred-only
+#   declared_regimes: [gdpr]      # regime ids from the shipped dataset (gdpr,
+#                                 # ccpa, hipaa); hybrid mode suggests candidates
 ```
 
 ### Execution modes
@@ -317,6 +328,13 @@ genuinely cheaper rather than just quieter.
 | `full` (default) | Medium+ with confidence ≥ 0.5 | all domains, escalation ≤ 3 |
 | `audit` | everything | all domains, escalation ≤ 4 |
 
+Business-flow analysis (feature 015) stays off under every profile unless enabled
+(`business_flow.enabled` in config, `analysis_depth.business_flow` on a custom
+profile, or `--set analysis_depth.business_flow=true` per scan); under a capped
+profile its round obeys the same escalation ceiling and declares over-ceiling
+flows as coverage gaps. Its token spend is itemized as the `business_flow_analysis`
+stage in the usage summary.
+
 Define your own in `profiles:` (optionally `base:` an existing one), and override
 any setting per scan with `--set key=value`.
 
@@ -392,7 +410,8 @@ These are enforced by tests, not just intent:
 ├── handoff/{requests,responses}/        agent reasoning exchange
 ├── analysis/answers/             cached endpoint/batch answers (reused when byte-identical)
 ├── triage/declarations.json      operator answers to triage flag questions
-├── findings/{local,correlated}
+├── business-flows.json           reconstructed flows + coverage ledger (only when enabled)
+├── findings/{local,flows,correlated}
 ├── system-review.md
 ├── reports/<scan-id>.{md,json,html}   one data set, three renderings
 ├── state.json                  checkpoints, file hashes
@@ -515,6 +534,20 @@ Tooling, execution, and reporting (built and tested):
   triage round); currency findings merge per `(member, product, cycle)` instead
   of doubling up; and a narrative section that references a nonexistent finding
   is quarantined at publication — declared in the report, exit code 4
+- ✅ Business-flow (functional) vulnerability analysis (feature 015): the scan
+  reconstructs business journeys from the repository model and reasons over each
+  whole flow — missing enforcement between steps, skippable enforced steps,
+  cross-role/tenant transitions — where every individual step may be correctly
+  coded. Opt-in only (off by default everywhere; profile/config or a skill-level
+  ask with opt-in remember). Flows stitch across repositories only through
+  declared, typed integrations; undeclared hops close the flow as partial and are
+  declared in coverage. Findings are first-class — flow narrative inline in the
+  merged ranked list, path-based verified/plausible/disproven verdicts, the same
+  triage round, and related-links to code-level findings rather than duplicates.
+  Declared regulatory regimes (gdpr/ccpa/hipaa shipped as versioned data) are
+  evaluated against flows (consent-before-collection, deletion paths, regulated
+  data safeguards); applicability modes are hybrid (default — detected candidates
+  suggested, never evaluated until declared), declared-only, or inferred-only
 
 Multi-repo workspaces (Phase 6 / US4 — built and tested):
 

@@ -170,6 +170,8 @@ class GraphBuilder:
             file_class="source",
             imports=facts.imports,
             annotations=facts.annotations,
+            outbound_hosts=facts.outbound_hosts,
+            data_categories=facts.data_categories,
         )
 
         for symbol in facts.symbols:

@@ -16,7 +16,13 @@ import pytest
 
 from pipeline import applicability, controls, cwe, resources, stack_currency, stacks
 
-DATA_FILES = ("applicability.json", "framework_controls.json", "stacks.json", "eol.json", "usage_patterns.json")
+DATA_FILES = (
+    "applicability.json",
+    "framework_controls.json",
+    "stacks.json",
+    "eol.json",
+    "usage_patterns.json",
+)
 
 
 # --------------------------------------------------------------- shared shape

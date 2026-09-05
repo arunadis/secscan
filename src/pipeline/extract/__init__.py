@@ -153,6 +153,13 @@ class FileFacts:
     endpoints: list[Endpoint] = field(default_factory=list)
     data_access: list[DataAccess] = field(default_factory=list)
     annotations: list[str] = field(default_factory=list)
+    #: Outbound URL hostnames written or called from this file (feature 015):
+    #: bare annotations say THAT there is external traffic; hosts say to WHOM,
+    #: which is what cross-repository flow stitching needs.
+    outbound_hosts: list[str] = field(default_factory=list)
+    #: Regulated-data categories detected in this file's text via the shipped
+    #: regime signal rules (feature 015, FR-022).
+    data_categories: list[str] = field(default_factory=list)
     parse_errors: int = 0
 
     def symbol_at(self, line: int) -> str:
@@ -197,6 +204,8 @@ class FileFacts:
                 for d in self.data_access
             ],
             "annotations": list(self.annotations),
+            "outbound_hosts": list(self.outbound_hosts),
+            "data_categories": list(self.data_categories),
         }
 
 

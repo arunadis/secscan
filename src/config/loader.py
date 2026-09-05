@@ -35,8 +35,9 @@ VALID_TOGGLES = ("auto", True, False)
 #: Declared config surface. Anything outside this is rejected (strict schema).
 _ALLOWED: dict[str, tuple[str, ...]] = {
     "": ("version", "workspace", "llm", "execution_policy", "budgets", "profiles",
-         "scanners", "redaction", "tooling", "output", "triage"),
+         "scanners", "redaction", "tooling", "output", "triage", "business_flow"),
     "triage": ("enabled", "min_severity_band", "include_unverified"),
+    "business_flow": ("enabled", "applicability_mode", "declared_regimes"),
     "workspace": ("members", "integrations"),
     "llm": ("mode", "endpoint", "retry"),
     "llm.endpoint": ("provider", "model_map", "api_key_env", "base_url"),
@@ -65,12 +66,17 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "scanners": {name: {"enabled": "auto"} for name in VALID_SCANNERS},
     "redaction": {"extra_patterns": []},
     "tooling": {"install": "ask", "timeout_s": 120},
+    # Feature 015: `enabled` is intentionally ABSENT — an unset key means "no
+    # preference configured", which is what triggers the interactive skill ask.
+    "business_flow": {"applicability_mode": "hybrid", "declared_regimes": []},
 }
 
 VALID_TOOLING_INSTALL = ("never", "ask", "all")
 #: Triage round enablement (feature 013): auto follows the profile's
 #: ``analysis_depth.finding_triage``; on/off override it.
 VALID_TRIAGE_ENABLED = ("auto", "on", "off")
+#: Regime applicability modes for business-flow analysis (feature 015, FR-022).
+VALID_APPLICABILITY_MODES = ("hybrid", "declared-only", "inferred-only")
 VALID_SEVERITY_BANDS = ("Low", "Medium", "High", "Critical")
 #: Progress output levels for `run` (feature 011). Mirrors pipeline.progress.OutputLevel;
 #: kept as data here so config validation needs no pipeline import.
@@ -206,6 +212,23 @@ class Config:
         """Whether findings with unverified status are triage candidates (feature 013)."""
         return bool(self._get("triage", "include_unverified", default=True))
 
+    @property
+    def business_flow_enabled(self) -> bool | None:
+        """``None`` = preference unset (skill asks interactively); explicit bool when
+        set (feature 015, FR-002/FR-003)."""
+        value = self._get("business_flow", "enabled", default=None)
+        return None if value is None else bool(value)
+
+    @property
+    def business_flow_applicability_mode(self) -> str:
+        """Regime applicability mode (feature 015, FR-022)."""
+        return str(self._get("business_flow", "applicability_mode", default="hybrid"))
+
+    @property
+    def business_flow_declared_regimes(self) -> list[str]:
+        """User-declared regulatory regimes (feature 015, FR-022/FR-023)."""
+        return list(self._get("business_flow", "declared_regimes", default=[]) or [])
+
     def scanners(self) -> dict[str, ScannerSetting]:
         configured = self.raw.get("scanners") or {}
         out: dict[str, ScannerSetting] = {}
@@ -305,6 +328,13 @@ redaction:
 tooling:                            # external security tools (feature 008)
   install: ask                      # never | ask | all — consent default for init
   timeout_s: 120                    # per-tool wall-clock ceiling during analysis
+
+# business_flow:                      # business-flow (functional) analysis (feature 015)
+#   enabled: true                   # absent = unset: the skill asks interactively and
+#                                   # offers to remember; false = off
+#   applicability_mode: hybrid      # hybrid | declared-only | inferred-only
+#   declared_regimes: []            # ids from the shipped regimes dataset
+#                                   # (gdpr | ccpa | hipaa once v1 ships)
 """
 
 
@@ -335,6 +365,7 @@ def apply_env_overrides(raw: dict[str, Any], environ: dict[str, str] | None = No
         "TOOLING": ("tooling",),
         "OUTPUT": ("output",),
         "TRIAGE": ("triage",),
+        "BUSINESS_FLOW": ("business_flow",),
     }
     for name, value in sorted(env.items()):
         if not name.startswith(ENV_PREFIX):
@@ -347,7 +378,11 @@ def apply_env_overrides(raw: dict[str, Any], environ: dict[str, str] | None = No
             node = raw
             for part in path:
                 node = node.setdefault(part, {})
-            node[key] = _coerce_env_value(value)
+            # declared_regimes arrives comma-separated (feature 015).
+            if key == "declared_regimes" and path == ("business_flow",):
+                node[key] = [item.strip() for item in value.split(",") if item.strip()]
+            else:
+                node[key] = _coerce_env_value(value)
             applied.append(f"{'.'.join(path)}.{key}")
             break
     return applied
@@ -371,6 +406,31 @@ def load(scan_dir: Path, environ: dict[str, str] | None = None) -> Config:
     if problems:
         raise ConfigError(problems)
     return Config(path=path, raw=parsed)
+
+
+def _known_regime_ids() -> set[str]:
+    """Regime ids shipped in the versioned dataset (feature 015, FR-020).
+
+    Lazy import: config must not pay for (or cycle with) pipeline modules at import
+    time. An unreadable or malformed dataset fails validation loudly rather than
+    silently accepting every declared id.
+    """
+    import functools
+
+    @functools.cache
+    def _load() -> set[str]:
+        import json
+
+        from pipeline import resources
+
+        try:
+            data = json.loads(resources.data_path("regimes.json").read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ConfigError([f"regimes dataset is unreadable: {exc}"]) from exc
+        regimes = data.get("regimes") or []
+        return {str(regime.get("id")) for regime in regimes if regime.get("id")}
+
+    return _load()
 
 
 class ConfigNotFound(FileNotFoundError):
@@ -562,6 +622,41 @@ def validate_config(raw: dict[str, Any]) -> list[str]:
                 problems.append(
                     f"triage.include_unverified must be a boolean (found {include!r})"
                 )
+
+    # --------------------------------------------------------- business flow
+    business_flow = raw.get("business_flow")
+    if business_flow is not None:
+        if not isinstance(business_flow, dict):
+            problems.append("business_flow must be a mapping")
+        else:
+            enabled = business_flow.get("enabled")
+            if enabled is not None and not isinstance(enabled, bool):
+                problems.append(
+                    f"business_flow.enabled must be a boolean (found {enabled!r})"
+                )
+            app_mode = business_flow.get("applicability_mode", "hybrid")
+            if app_mode not in VALID_APPLICABILITY_MODES:
+                problems.append(
+                    "business_flow.applicability_mode must be one of "
+                    f"{', '.join(VALID_APPLICABILITY_MODES)} (found {app_mode!r})"
+                )
+            regimes = business_flow.get("declared_regimes")
+            if regimes is not None:
+                if not isinstance(regimes, list) or not all(
+                    isinstance(r, str) for r in regimes
+                ):
+                    problems.append(
+                        "business_flow.declared_regimes must be a list of regime ids"
+                    )
+                else:
+                    known = _known_regime_ids()
+                    unknown = sorted(set(regimes) - known)
+                    if unknown:
+                        known_list = ", ".join(sorted(known)) or "(none shipped)"
+                        problems.append(
+                            "business_flow.declared_regimes: unknown regime(s) "
+                            f"{', '.join(unknown)}; known: {known_list}"
+                        )
 
     # -------------------------------------------------------------- profiles
     custom = raw.get("profiles") or {}

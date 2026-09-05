@@ -220,6 +220,64 @@
         "type": "string"
       }
     },
+    "flow_category": {
+      "enum": [
+        "flow-gap",
+        "regulatory-violation"
+      ],
+      "description": "Feature 015: marks a finding produced by business-flow analysis. Present iff flow_ref and flow_narrative are present."
+    },
+    "flow_ref": {
+      "type": "string",
+      "description": "Feature 015: stable id of the business flow this finding is bound to; MUST resolve against business-flows.json."
+    },
+    "flow_narrative": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "steps", "missing_check", "compromise"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["node_id"],
+            "properties": {
+              "node_id": { "type": "string", "minLength": 1 },
+              "detail": { "type": "string" }
+            }
+          }
+        },
+        "missing_check": { "type": "string", "minLength": 1 },
+        "compromise": { "type": "string", "minLength": 1 }
+      }
+    },
+    "regulatory_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["regime", "obligation"],
+        "properties": {
+          "regime": {
+            "type": "string",
+            "minLength": 1
+          },
+          "obligation": {
+            "type": "string",
+            "minLength": 1
+          },
+          "basis": {
+            "type": "string",
+            "description": "Detection basis, required when the regime was selected in inferred-only applicability mode (FR-023)."
+          }
+        }
+      },
+      "description": "Feature 015: regime + obligation bindings for regulatory-violation findings; distinct from CWE-derived compliance_refs."
+    },
     "segment_id": {
       "type": "string"
     },

@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "business_flow.schema.json",
+  "title": "Business Flows",
+  "description": "Deterministically reconstructed business flows and honest-uncertainty coverage for feature 015 (contracts/business-flow-artifact.md §2). Payload of .secscan/business-flows.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["flows", "coverage"],
+  "properties": {
+    "flows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "actor", "steps", "partial"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^flow:" },
+          "name": { "type": "string", "minLength": 1 },
+          "actor": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "determination"],
+            "properties": {
+              "kind": { "enum": ["anonymous", "authenticated", "role"] },
+              "role": { "type": "string" },
+              "determination": { "enum": ["declared", "inferred", "undetermined"] }
+            }
+          },
+          "steps": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["node_id", "operation", "annotations", "data_categories"],
+              "properties": {
+                "node_id": { "type": "string", "minLength": 1 },
+                "operation": {
+                  "enum": ["entry", "transition", "mutation", "external-call", "terminal"]
+                },
+                "annotations": { "type": "array", "items": { "type": "string" } },
+                "data_categories": {
+                  "type": "array",
+                  "items": {
+                    "enum": ["personal-data", "health-data", "financial-data"]
+                  }
+                },
+                "integration_leg": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["type", "target_repo"],
+                  "properties": {
+                    "type": {
+                      "enum": [
+                        "sync-api",
+                        "async-messaging",
+                        "shared-datastore",
+                        "identity-propagation"
+                      ]
+                    },
+                    "target_repo": { "type": "string", "minLength": 1 }
+                  }
+                }
+              }
+            }
+          },
+          "related_data_flows": { "type": "array", "items": { "type": "string" } },
+          "partial": { "type": "boolean" },
+          "gap_reasons": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "integration-undeclared",
+                "integration-type-undetermined",
+                "actor-undetermined",
+                "budget-unreconstructable"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reconstructed", "analyzed", "partial", "unanalyzed", "candidate_regimes", "applicability"],
+      "properties": {
+        "reconstructed": { "type": "array", "items": { "type": "string" } },
+        "analyzed": { "type": "array", "items": { "type": "string" } },
+        "partial": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["flow_id", "gap_reasons"],
+            "properties": {
+              "flow_id": { "type": "string" },
+              "gap_reasons": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+            }
+          }
+        },
+        "unanalyzed": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["flow_id", "reason"],
+            "properties": {
+              "flow_id": { "type": "string" },
+              "reason": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "undetermined": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["flow_id", "reasons"],
+            "properties": {
+              "flow_id": { "type": "string" },
+              "reasons": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+            }
+          },
+          "description": "answered but undetermined flows, with reasons (feature 015, SC-004)"
+        },
+        "candidate_regimes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["regime", "detected_categories", "step_refs"],
+            "properties": {
+              "regime": { "type": "string", "minLength": 1 },
+              "detected_categories": {
+                "type": "array",
+                "items": {
+                  "enum": ["personal-data", "health-data", "financial-data"]
+                },
+                "minItems": 1
+              },
+              "step_refs": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "applicability": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "evaluated_regimes"],
+          "properties": {
+            "mode": { "enum": ["hybrid", "declared-only", "inferred-only"] },
+            "evaluated_regimes": { "type": "array", "items": { "type": "string" } },
+            "skipped_reason": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

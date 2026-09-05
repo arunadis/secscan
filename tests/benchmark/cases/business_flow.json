@@ -1,0 +1,18 @@
+{
+  "case_id": "business-flow-gap-detection",
+  "kind": "seeded-workspace",
+  "target": "tests/fixtures/flow_app (seeded order flow with a staff-discount step lacking its role check)",
+  "source_of_truth": "fixture ground truth declared in tests/fixtures/flow_app.py",
+  "expectations": [
+    {
+      "defect_class": "business-flow",
+      "assertion": "The seeded staff-discount flow gap is reported exactly once as a flow-gap finding naming flow, missing check, and compromise; the deliberately safe flows (/profile, /admin/users) produce no flow findings.",
+      "baseline": "pre-015 tooling: no flow-level detection existed — a code-level scan of the same fixture reports nothing for the gap"
+    },
+    {
+      "defect_class": "regulatory-flow",
+      "assertion": "With gdpr declared, the consent-less signup flow yields exactly one regulatory-violation finding naming gdpr + gdpr-consent-before-collection; with nothing declared in hybrid mode, gdpr/ccpa surface as declared candidates and zero findings.",
+      "baseline": "pre-015 tooling: no regulatory-obligation evaluation existed"
+    }
+  ]
+}

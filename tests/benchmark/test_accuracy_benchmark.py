@@ -65,6 +65,80 @@ def test_usage_baseline_is_recorded_with_its_profile_and_target() -> None:
     assert payload["min_acceptable_savings"] < payload["savings_vs_maximal_context"]
 
 
+def test_defect_class_business_flow(tmp_path) -> None:
+    """Feature 015 (SC-002): the seeded business-flow gap is its own release-
+    blocking defect class — detection asserted per fixture ground truth, safe
+    flows asserted unflagged."""
+    from pipeline import run as run_mod
+    from tests.fixtures.flow_app import GROUND_TRUTH, build, flow_oracle_answer
+    from tests.integration.conftest import oracle_responder
+
+    def responder(request) -> str:
+        answer = flow_oracle_answer(request)
+        return answer if answer is not None else oracle_responder(request)
+
+    root = build(tmp_path)
+    write_config(root, {"business_flow": {"enabled": True}})
+    result = run_mod.run_scan(root, responder=responder, full=True)
+
+    gaps = [f for f in result.findings if f.get("flow_category") == "flow-gap"]
+    assert len(gaps) == len(GROUND_TRUTH["flow_gaps"])
+    assert all(
+        GROUND_TRUTH["flow_gaps"][0]["missing_check"] in f["flow_narrative"]["missing_check"]
+        for f in gaps
+    )
+    # Safe flows are never flagged (the false-positive guard).
+    for finding in result.findings:
+        narrative = finding.get("flow_narrative") or {}
+        assert not any(
+            route in str(narrative.get("name", "")) for route in GROUND_TRUTH["safe_flows_at"]
+        )
+
+
+def test_defect_class_regulatory_flow(tmp_path) -> None:
+    """Feature 015 (SC-006/SC-007): obligation breaches and honest candidates are
+    their own release-blocking defect class."""
+    from pipeline import run as run_mod
+    from pipeline.state import ArtifactStore
+    from tests.fixtures.flow_app import GROUND_TRUTH, build, flow_oracle_answer
+    from tests.integration.conftest import oracle_responder
+
+    case = GROUND_TRUTH["regulatory_case"]
+
+    def responder(request) -> str:
+        answer = flow_oracle_answer(request)
+        return answer if answer is not None else oracle_responder(request)
+
+    # Declared: the breach is found once, naming regime and obligation.
+    root = build(tmp_path / "declared")
+    write_config(
+        root,
+        {"business_flow": {"enabled": True, "applicability_mode": "declared-only",
+                           "declared_regimes": [case["expected_regime"]]}},
+    )
+    result = run_mod.run_scan(root, responder=responder, full=True)
+    violations = [
+        f for f in result.findings if f.get("flow_category") == "regulatory-violation"
+    ]
+    assert len(violations) == 1
+    assert (
+        violations[0]["regulatory_refs"][0]["regime"],
+        violations[0]["regulatory_refs"][0]["obligation"],
+    ) == (case["expected_regime"], case["expected_obligation"])
+
+    # Hybrid, nothing declared: candidates declared, but never evaluated.
+    root = build(tmp_path / "hybrid")
+    write_config(root, {"business_flow": {"enabled": True}})
+    result = run_mod.run_scan(root, responder=responder, full=True)
+    assert not [
+        f for f in result.findings if f.get("flow_category") == "regulatory-violation"
+    ]
+    candidates = ArtifactStore(root).read("business-flows.json")["coverage"][
+        "candidate_regimes"
+    ]
+    assert case["expected_regime"] in {c["regime"] for c in candidates}
+
+
 def test_defect_class_triage_correctness(tmp_path) -> None:
     """FR-016: triage correctness is its own release-blocking defect class.
 
