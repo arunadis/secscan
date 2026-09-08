@@ -144,6 +144,18 @@ class DataAccess:
 
 
 @dataclass
+class Wiring:
+    """A guard/handler attached by registration rather than a call site
+    (feature 016, FR-001/FR-002; contracts/graph-wiring-contract.md §1):
+    `router.use(auth)`, route-argument middleware, `before_request(fn)`,
+    `middlewares.append(fn)`, `Use(mw)`."""
+
+    target: str  # identifier being registered
+    route: str | None  # route-scoped attachment; None = module/application scope
+    line: int
+
+
+@dataclass
 class FileFacts:
     path: str
     language: str
@@ -152,6 +164,8 @@ class FileFacts:
     calls: list[CallSite] = field(default_factory=list)
     endpoints: list[Endpoint] = field(default_factory=list)
     data_access: list[DataAccess] = field(default_factory=list)
+    #: Registration-style attachments that name-based call resolution cannot see.
+    wiring: list[Wiring] = field(default_factory=list)
     annotations: list[str] = field(default_factory=list)
     #: Outbound URL hostnames written or called from this file (feature 015):
     #: bare annotations say THAT there is external traffic; hosts say to WHOM,
@@ -206,6 +220,10 @@ class FileFacts:
             "annotations": list(self.annotations),
             "outbound_hosts": list(self.outbound_hosts),
             "data_categories": list(self.data_categories),
+            "wiring": [
+                {"target": w.target, "route": w.route, "line": w.line}
+                for w in self.wiring
+            ],
         }
 
 

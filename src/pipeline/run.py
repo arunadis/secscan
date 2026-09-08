@@ -190,10 +190,28 @@ def run_scan(
     file_hashes = store.snapshot_files(roots)
 
     # -------------------------------------------------- stage 2: code graph
+    # Feature 017 (FR-002): the resume identity is content + tool + recognizer
+    # versions, so an upgraded extractor never silently reuses a stale graph.
+    from pipeline import cwe as cwe_mod
+    from pipeline import identity_rules
+    from pipeline.state import EXTRACTOR_VERSION, TOOL_VERSION
+
+    graph_resume_key = hash_document(
+        {
+            "files": file_hashes,
+            "tool": TOOL_VERSION,
+            "recognizers": {
+                "extractor": EXTRACTOR_VERSION,
+                "identity_rules": identity_rules.rules_version(),
+                "redactor": redactor.rules_version,
+                "cwe": cwe_mod.dataset_version(),
+            },
+        }
+    )
     graph = _stage(
         store,
         "build_code_graph",
-        resume_key=hash_document(file_hashes),
+        resume_key=graph_resume_key,
         artifact="code-graph.json",
         run=lambda: build_code_graph.run(store, workspace),
         **stage_kwargs,
@@ -249,6 +267,13 @@ def run_scan(
 
     # ------------------------------------------- stage 4-6: bounded analysis
     flows = dataflow.trace_flows(graph)
+    # Feature 016 (FR-007): unconnectable substrate is a named, actionable
+    # coverage gap — it must never read as clean. Verification derives the
+    # matching demotion from the same computation (apply_verification default),
+    # so the report note and finding grades can never disagree.
+    reachability_note = dataflow.reachability_gap_note(graph, flows)
+    if reachability_note:
+        _warn(reachability_note, stage="segment_analysis")
     builder = build_context.ContextBuilder(store, workspace, graph, budget, redactor)
     answers = AnswerStore(store.dir / ANSWERS_DIR)
 
@@ -420,6 +445,36 @@ def run_scan(
                 stage="segment_analysis",
                 subject=segment["id"],
             )
+
+    # Client-asserted identity is a deterministic weakness class (feature 016,
+    # FR-014): the reasoning stage can miss it under degraded framing, exactly as
+    # secrets need no model. Same append path, same normalizer discipline.
+    from pipeline import identity_rules
+
+    pack = identity_rules.load_identity_rules()
+    if pack:
+        pack_version = identity_rules.rules_version()
+        for segment in segments:
+            raw_hits = identity_rules.evaluate_segment(
+                roots, graph, segment, pack, pack_version, segment_id=segment["id"]
+            )
+            if not raw_hits:
+                continue
+            identity_result = normalizer.normalize(
+                raw_hits,
+                source="analysis",
+                status="local",
+                default_repo=segment["repos"][0],
+                segment_id=segment["id"],
+            )
+            per_segment[segment["id"]].extend(identity_result.findings)
+            for rejected in identity_result.rejected:
+                _warn(
+                    f"{segment['id']}: identity-archetype finding rejected: "
+                    f"{rejected['reason']}",
+                    stage="segment_analysis",
+                    subject=segment["id"],
+                )
 
     raw_findings: list[dict[str, Any]] = []
     for segment_id, findings in sorted(per_segment.items()):
@@ -816,7 +871,7 @@ def run_scan(
     if active_profile.analysis_depth.system_review:
 
         def _review() -> str:
-            narrative = _system_review_narrative(correlated, workspace)
+            narrative = _system_review_narrative(correlated, workspace, graph=graph)
             store.write_text("system-review.md", narrative)
             return narrative
 
@@ -1177,13 +1232,15 @@ def _stage_list(
 
 
 def _system_review_narrative(
-    findings: list[dict[str, Any]], workspace: dict[str, Any]
+    findings: list[dict[str, Any]], workspace: dict[str, Any], graph: dict[str, Any] | None = None
 ) -> str:
     """Deterministic system-level narrative from structured evidence only.
 
     In agent-mediated operation the host agent enriches this via
     ``prompts/final_review.md``; the deterministic baseline guarantees the artifact
-    always exists and never reads source.
+    always exists and never reads source. Feature 016 (FR-016, graph-wiring
+    contract §5): the guard-attachment matrix is derived here from the graph —
+    segment packets are never this review's input.
     """
     members = [m["name"] for m in workspace["members"]]
     systemic = correlate_findings.systemic_groups(findings)
@@ -1230,7 +1287,59 @@ def _system_review_narrative(
             "- Single-repository workspace: cross-repository analysis is not applicable."
         )
     lines.append("")
+
+    guard_lines = _guard_attachment_lines(graph)
+    if guard_lines:
+        lines.extend(guard_lines)
     return "\n".join(lines)
+
+
+def _guard_attachment_lines(graph: dict[str, Any] | None) -> list[str]:
+    """Route module → attached guards, derived from wiring edges (FR-016).
+
+    Also declares unresolved wiring registrations: a handler whose name matched
+    nothing in-repo is a coverage fact, not silence (FR-010).
+    """
+    if not graph:
+        return []
+    index = {node["id"]: node for node in graph.get("nodes") or []}
+    attachments: dict[str, set[str]] = {}
+    for edge in graph.get("edges") or []:
+        if edge["type"] != "handler":
+            continue
+        source = index.get(edge["from"])
+        target = index.get(edge["to"])
+        if not source or not target or source.get("type") != "endpoint":
+            continue
+        attachments.setdefault(source["path"], set()).add(
+            target.get("symbol") or target["path"]
+        )
+    route_files = sorted(
+        {
+            node["path"]
+            for node in graph.get("nodes") or []
+            if node.get("type") == "endpoint"
+        }
+    )
+    if not route_files:
+        return []
+    lines = ["## Guard attachment", ""]
+    for path in route_files:
+        guards = attachments.get(path)
+        lines.append(f"- {path}: {', '.join(sorted(guards)) if guards else 'none'}")
+    unresolved = graph.get("unresolved_wiring") or []
+    if unresolved:
+        lines.append("")
+        lines.append(
+            "Unresolved wiring registrations (no in-repo symbol matched; attachment "
+            "undetermined — never assumed attached or absent):"
+        )
+        for entry in unresolved:
+            lines.append(
+                f"- {entry['file']}:{entry['line']} `{entry['name']}` — {entry['reason']}"
+            )
+    lines.append("")
+    return lines
 
 
 def main() -> None:  # pragma: no cover - CLI wrapper

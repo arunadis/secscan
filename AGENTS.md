@@ -60,7 +60,8 @@ src/
 │                  post-correlation finding-triage round (packets, verdict gates,
 │                  citation re-verification, verdict application, user declarations);
 │                  business_flow.py runs the opt-in flow reconstruction +
-│                  analysis round (feature 015)
+│                  analysis round (feature 015); identity_rules.py evaluates the
+│                  versioned client-asserted-identity rule pack (feature 016)
 ├── config/        config loading, strict validation, profiles, execution mode
 └── profiles/      built-in scan profiles as data
 tests/

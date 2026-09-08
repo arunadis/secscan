@@ -133,6 +133,18 @@ def apply_declarations(
             and _identity_matches(ref, f)
             and f["awaiting_verification"]["question"] == declaration["question"]
         ]
+        # Feature 017 (FR-008): the question is the operator's unit of work. When
+        # an identity-matching flag carries the declared question, the answer
+        # resolves every flag asking exactly that text; identity admission still
+        # gates per finding inside the loop (credential-class refusal, per-finding
+        # downgrade).
+        if flagmatch:
+            flagmatch = [
+                f
+                for f in kept
+                if f.get("awaiting_verification")
+                and f["awaiting_verification"]["question"] == declaration["question"]
+            ]
         if not flagmatch:
             decisions.append(
                 {

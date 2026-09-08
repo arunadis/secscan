@@ -307,6 +307,13 @@
             "disproven"
           ]
         },
+        "basis": {
+          "enum": [
+            "traced",
+            "presence"
+          ],
+          "description": "Feature 016 (traceability contract): 'traced' asserts a complete source-to-sink path was walked; 'presence' asserts the weakness's code is present at the location. Must be written whenever status is 'verified'; pre-016 artifacts without it remain valid, so it is not added to 'required'."
+        },
         "gap": {
           "type": "string"
         },

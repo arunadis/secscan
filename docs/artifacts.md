@@ -63,7 +63,10 @@ history with `--commit-artifacts`.
   list (ground `triage-control-present`) and flagged findings render in the
   report's Awaiting Verification section. Persisted triage answers follow the same
   content-addressed reuse rule as analysis answers, so a re-run replays outcomes
-  byte-identically.
+  byte-identically. Feature 017: findings flagged with the *same question text*
+  are batched into one entry listing all of them, and one declaration answers the
+  whole question group (per-finding admission gates like the credential-refute
+  refusal still apply individually).
 - **Answers and the batch ledger (endpoint mode).** `analysis/answers/<request-id>.json`
   holds exactly `{request_id, answer_key, content}` for every model answer, whether it
   arrived by batch, by fallback, or live. The key is derived from the serialized
@@ -73,6 +76,25 @@ history with `--commit-artifacts`.
   records each submitted batch (provider handle, items with their keys, submission and
   expiry times, status); it is what lets an interrupted wait resume the same batch. Both
   are cleared by `--full`.
+- **Verification grades (feature 016).** Every finding's `verification` record states
+  `status` (verified / plausible / disproven) and — for verified findings — `basis`:
+  `traced` (a complete source-to-sink path was walked) or `presence` (the weakness's
+  code is proven present; reachability was not established). The executive summary
+  separates the two counts, and presence-confirmed findings never claim a complete
+  path. When scan-wide flow tracing cannot connect any entry point to any
+  security-relevant operation, the report's Coverage section declares
+  `reachability unconfirmed` (counts included), and reachability-dependent
+  presence verdicts (missing authentication) demote to `plausible` with that gap
+  named as the reason.
+- **Wiring truthfulness (feature 016).** The code graph links registration-style
+  guards (`router.use(mw)`, route-argument middleware, `before_request(fn)`,
+  `Use(mw)`) to the endpoints they protect via `handler` edges, and to the wiring
+  file via `calls` edges. Resolution is name-based and second-pass. Registrations
+  whose target matches no in-repo symbol are recorded in the graph artifact's
+  `unresolved_wiring` array (`file`, `line`, `name`, `reason`) — present even when
+  empty, so its absence is never ambiguous. Guard-named functions with no inbound
+  production reference carry the `unattached_security_guard` annotation. The
+  system-level review reports the per-module guard-attachment matrix.
 
 ## Schema versioning
 

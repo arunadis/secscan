@@ -67,7 +67,12 @@ Only the domains relevant to this segment are included below (FR-011).
   from user input and used without scoping (IDOR).
 - **authentication** — Unauthenticated access to protected functionality, weak
   credential handling, token verification that does not check signature/issuer/
-  expiry.
+  expiry, **and identity asserted by a client-controlled value** (a header,
+  cookie, or body field naming a user/role/tenant) consumed without verifying
+  any credential — even when a middleware with an auth-meaningful name sits on
+  the path: a guard that proves nothing is missing authentication wearing a name.
+  Report it at the trust decision itself (the function that accepts the asserted
+  identity), with the dispatch (`next(...)`, handler invocation) as evidence.
 - **session-management** — Fixation, missing rotation on privilege change, cookie
   flags (HttpOnly/Secure/SameSite), unbounded lifetime.
 - **secrets** — Credentials, keys, or tokens embedded in source or logged.

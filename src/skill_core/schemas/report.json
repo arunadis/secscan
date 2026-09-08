@@ -434,6 +434,15 @@
             "type": "string",
             "pattern": "^SEC-[0-9]{4,}$"
           },
+          "finding_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^SEC-[0-9]{4,}$"
+            },
+            "minItems": 1,
+            "description": "Feature 017 (FR-008): all findings bound to this grouped question. Present on grouped entries; the first member stays 'finding_id' for backward compatibility."
+          },
           "location": { "type": "object" },
           "question": { "type": "string", "minLength": 1 },
           "settling_evidence_hint": { "type": "string" },

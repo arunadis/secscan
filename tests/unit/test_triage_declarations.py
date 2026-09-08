@@ -189,3 +189,63 @@ def test_declarations_key_changes_with_content() -> None:
         [declaration(answer="Different answer.")]
     )
     assert declarations_key([]) != declarations_key([declaration()])
+
+
+# ---------------------------------------------------------------- feature 017
+# FR-008 (clarify): one answered question resolves every flag carrying that text.
+
+
+def test_one_answer_resolves_the_whole_question_group() -> None:
+    findings = [
+        flagged_finding(fid="SEC-0002", **{}),
+        flagged_finding(fid="SEC-0003", file="src/api/users.py"),
+        flagged_finding(fid="SEC-0004", file="src/api/reports.py"),
+    ]
+    answers = apply_declarations([declaration()], findings, [], redactor=Redactor())
+    kept, _suppressions, decisions = answers
+    by_id = {f["id"]: f for f in kept}
+    for fid in ("SEC-0002", "SEC-0003", "SEC-0004"):
+        assert "awaiting_verification" not in by_id[fid]
+        assert by_id[fid]["triage"]["user_declaration"]
+    assert sum(
+        1 for d in decisions if d["outcome"] == "applied"
+    ) == 3
+
+
+def test_group_resolution_respects_per_finding_admission() -> None:
+    """A credential-class member is refused even when its question group resolves."""
+    flagged = flagged_finding(fid="SEC-0005", file="src/config/secrets.py", cwe_id="CWE-798")
+    group = [flagged_finding(fid="SEC-0006"), flagged]
+    declaration_refute = declaration(resolution="refute")
+    kept, suppressions, decisions = apply_declarations(
+        [declaration_refute], group, [], redactor=Redactor()
+    )
+    kept_ids = {f["id"] for f in kept}
+    # refute resolution removes the admissible member into the suppression list…
+    assert "SEC-0006" not in kept_ids
+    assert suppressions
+    # …while the credential-class member rides the refusal gate (FR-008 parity) and
+    # stays flagged.
+    assert "awaiting_verification" in kept[0]
+    assert any(d["outcome"] == "rejected-credential-refute" for d in decisions)
+
+
+def test_different_questions_stay_independent() -> None:
+    other = flagged_finding(fid="SEC-0007")
+    other["awaiting_verification"]["question"] = "A different question entirely?"
+    findings = [flagged_finding(fid="SEC-0008"), other]
+    kept, _s, _d = apply_declarations(
+        [declaration()], findings, [], redactor=Redactor()
+    )
+    by_id = {f["id"]: f for f in kept}
+    assert "awaiting_verification" not in by_id["SEC-0008"]
+    assert "awaiting_verification" in by_id["SEC-0007"]
+
+
+def test_lapse_when_no_identity_match() -> None:
+    moved = flagged_finding(fid="SEC-0009", file="src/moved.py")
+    kept, _s, decisions = apply_declarations(
+        [declaration()], [moved], [], redactor=Redactor()
+    )
+    assert "awaiting_verification" in kept[0]
+    assert decisions[0]["outcome"] == "declared-lapsed"

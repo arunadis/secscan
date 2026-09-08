@@ -321,3 +321,137 @@ def test_attach_flag_is_the_single_flag_path() -> None:
         "settling_evidence_hint": "h",
         "provenance": "triage",
     }
+
+
+# ---------------------------------------------------------------- feature 016
+# FR-020 (clarify Q1): a control inside the finding's accusation perimeter can
+# never refute or downgrade it, even when its citation text verifies (T030).
+
+_IMPLICATED_MIDDLEWARE = """const { getDatabase } = require('../database/init');
+
+function authenticateUser(req, res, next) {
+  const e = req.headers['x-user-email'];
+  req.userEmail = e;
+  next();
+}
+
+module.exports = { authenticateUser };
+"""
+
+
+def _perimeter_finding() -> dict:
+    finding = make_finding(
+        cwe_id="CWE-287",
+        file="src/middleware/auth.js",
+    )
+    finding["evidence"] = [
+        {
+            "repo": "shop",
+            "file": "src/middleware/auth.js",
+            "symbol": "authenticateUser",
+            "reason": "accepts any well-formed email with no credential check",
+        }
+    ]
+    return finding
+
+
+def _roots_with_middleware(tmp_path: Path) -> dict[str, Path]:
+    roots = write_control(tmp_path)
+    target = roots["shop"] / "src" / "middleware"
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "auth.js").write_text(_IMPLICATED_MIDDLEWARE)
+    return roots
+
+
+_IMPLICATED_CITATION = {
+    "repo": "shop",
+    "file": "src/middleware/auth.js",
+    "line_start": 3,
+    "line_end": 7,
+    "pattern": "authenticateUser",
+}
+
+
+def test_refuted_rejected_when_the_cited_control_is_the_accused_callable(tmp_path: Path) -> None:
+    finding = _perimeter_finding()
+    parsed = parse_verdict(
+        verdict(v="refuted", rationale="auth middleware exists on the path",
+                citations=[_IMPLICATED_CITATION]),
+        finding,
+        Redactor(),
+    )
+    assert not parsed.rejected  # parse-level: schema-clean; the perimeter gate is next
+    kept, suppressions, decisions = apply_outcomes(
+        [finding], {"SEC-0007": parsed}, roots=_roots_with_middleware(tmp_path),
+        graph={"nodes": []},
+    )
+    assert suppressions == []
+    assert kept[0] is finding
+    decision = decisions[0]
+    assert decision["outcome"] == "rejected-perimeter"
+    assert decision["applied_effect"] == "flag-attached"
+    assert "implicate" in decision["reason"]
+
+
+def test_downgraded_rejected_on_the_same_perimeter_rule(tmp_path: Path) -> None:
+    finding = _perimeter_finding()
+    parsed = parse_verdict(
+        verdict(v="downgraded", rationale="auth middleware limits impact",
+                citations=[_IMPLICATED_CITATION]),
+        finding,
+        Redactor(),
+    )
+    kept, suppressions, decisions = apply_outcomes(
+        [finding], {"SEC-0007": parsed}, roots=_roots_with_middleware(tmp_path),
+        graph={"nodes": []},
+    )
+    assert suppressions == []
+    assert kept[0]["severity_score"] == 8.2  # untouched
+    assert decisions[0]["outcome"] == "rejected-perimeter"
+
+
+def test_independent_control_verdict_still_applies(tmp_path: Path) -> None:
+    finding = _perimeter_finding()
+    parsed = parse_verdict(
+        verdict(v="refuted", rationale="separate filter chain authenticates first",
+                citations=[CITATION]),
+        finding,
+        Redactor(),
+    )
+    kept, suppressions, decisions = apply_outcomes(
+        [finding], {"SEC-0007": parsed}, roots=_roots_with_middleware(tmp_path),
+        graph={"nodes": []},
+    )
+    assert not kept
+    assert suppressions
+    assert suppressions[0]["finding"]["location"]["file"] == "src/middleware/auth.js"
+    assert decisions[0]["outcome"] == "applied"
+
+
+def test_related_symbols_extend_the_perimeter(tmp_path: Path) -> None:
+    finding = _perimeter_finding()
+    finding["evidence"] = []  # clear the direct implicate
+    finding["related_symbols"] = ["src/middleware/auth.js#authenticateUser"]
+    parsed = parse_verdict(
+        verdict(v="downgraded", rationale="r", citations=[_IMPLICATED_CITATION]),
+        finding,
+        Redactor(),
+    )
+    kept, _, decisions = apply_outcomes(
+        [finding], {"SEC-0007": parsed}, roots=_roots_with_middleware(tmp_path),
+        graph={"nodes": []},
+    )
+    assert kept and decisions[0]["outcome"] == "rejected-perimeter"
+
+
+def test_archetype_pack_cwes_cannot_be_refuted(tmp_path: Path) -> None:
+    """Clarify Q2: format detections — the identity-archetype pack's CWE set —
+    share the credential-class no-refute gate (FR-014)."""
+    finding = make_finding(cwe_id="CWE-290", detection="format")
+    parsed = parse_verdict(
+        verdict(v="refuted", rationale="middleware exists", citations=[CITATION]),
+        finding,
+        Redactor(),
+    )
+    assert parsed.rejected
+    assert "refuted" in parsed.reason

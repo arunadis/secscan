@@ -1,0 +1,18 @@
+{
+  "case_id": "guard-hidden-trust-boundary",
+  "kind": "seeded-workspace",
+  "target": "tests/fixtures/header_identity_app (Express-style service whose entire authentication is a middleware trusting the x-user-email header, attached via router.use / route arguments)",
+  "source_of_truth": "fixture ground truth declared in tests/fixtures/header_identity_app.py (models the 2026-09-07 timesheet-app miss)",
+  "expectations": [
+    {
+      "defect_class": "guard-hidden-trust",
+      "assertion": "The scan reports exactly one CWE-290 finding anchored at the middleware trust function (src/middleware/auth.js#authenticateUser) as a format detection; the JWT-verifying guard (src/middleware/verifyJwt.js#verifyJwt) produces no finding; the graph contains endpoint-to-guard handler edges for every wiring registration.",
+      "baseline": "pre-016 tooling: registration-style wiring produced no edges, request headers were not attacker-controlled sources, convenience driver calls were not data access, and the scan reported the scheme only obliquely via neighbouring routes — never at the trust point"
+    },
+    {
+      "defect_class": "grading-integrity",
+      "assertion": "The trust-point finding stands verified with basis 'traced' (flow present) or 'presence' (per contracts/verification-grades.md) and carries Detection: format with the deterministic rule id; a presence-driveable finding never degrades to generic plausibility with no reachability gap active.",
+      "baseline": "post-016 pre-017: the finding graded plausible (7.4, confidence 0.5) with no Detection provenance shown (observed in the 2026-09-07T100050Z report)"
+    }
+  ]
+}

@@ -45,6 +45,12 @@ DEFECT_CLASSES = (
     # and flows breaching declared regulatory obligations.
     "business-flow",
     "regulatory-flow",
+    # Feature 016: weakness sitting in a guard the code graph cannot see as wired
+    # (registration-style attachment, header/cookie sources, driver conventions).
+    "guard-hidden-trust",
+    # Feature 017: presence-proven findings graded as existence-truth, not guess
+    # (presence basis, deterministic provenance, resume-key invalidation).
+    "grading-integrity",
 )
 
 KINDS = ("reviewed-real", "seeded-workspace")

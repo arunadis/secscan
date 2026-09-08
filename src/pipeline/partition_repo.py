@@ -31,6 +31,9 @@ DOMAIN_BY_ANNOTATION: dict[str, tuple[str, ...]] = {
     "trust_boundary": ("authentication", "authorization", "api-security"),
     "authentication_required": ("authentication", "session-management"),
     "authorization_required": ("authorization",),
+    # Feature 016 (FR-006): a guard name with no inbound production edge is a
+    # security decision the analysis must look at, not skip.
+    "unattached_security_guard": ("authentication", "authorization"),
     "sensitive_data": ("data-protection", "secrets", "pii", "encryption"),
     "external_system": ("ssrf", "api-security", "pii"),
     "template_sink": ("injection",),
@@ -84,8 +87,17 @@ DOMAIN_BY_NAME: dict[str, tuple[str, ...]] = {
 _ALWAYS = ("injection", "authorization", "secrets")
 
 
+#: test/scaffold path markers for subdivision ordering and endpoint attribution
+#: (feature 016, FR-012 — alphabetical accident must not hand the route
+#: enumeration's original framing to the test files).
+_TEST_MARKERS = ("__tests__", "/tests/", "/test/", ".test.", ".spec.", "_test.")
+
+
+def _is_test(path: str) -> bool:
+    return any(marker in f"/{path}" or marker in path for marker in _TEST_MARKERS)
+
+
 def module_of(path: str) -> str:
-    """The meaningful module for ``path`` (its owning package directory)."""
     parts = path.split("/")
     if len(parts) == 1:
         return "."
@@ -215,7 +227,13 @@ def build_segments(
             if node.get("file_class"):
                 bucket["file_classes"].add(node["file_class"])
             if node["type"] == "endpoint":
-                bucket["entrypoints"].add(node.get("route", ""))
+                route = node.get("route", "")
+                # FR-012: endpoints defined only in test files are test-scoped
+                # where enumerated, so they cannot masquerade as production
+                # reachability.
+                if route and _is_test(path):
+                    route = f"{route} [test]"
+                bucket["entrypoints"].add(route)
             if node.get("symbol"):
                 bucket["symbols"].add(node["symbol"])
 
@@ -301,7 +319,10 @@ def _subdivide(segment: dict[str, Any], root: Path, budget: int) -> list[dict[st
     parts: list[dict[str, Any]] = []
     current: list[str] = []
     current_tokens = 0
-    for relative in segment["files"]:
+    # FR-012: production files first — alphabetical order alone hands the entry
+    # block to `__tests__` (it sorts before `src`), which is how the reviewed
+    # scan's route-bearing segment ended up framed as having no entry points.
+    for relative in sorted(segment["files"], key=lambda p: (_is_test(p), p)):
         tokens = _tokens_for(root, [relative])
         if current and current_tokens + tokens > usable:
             parts.append(_part(segment, parts, current, current_tokens))
@@ -311,6 +332,14 @@ def _subdivide(segment: dict[str, Any], root: Path, budget: int) -> list[dict[st
     if current:
         parts.append(_part(segment, parts, current, current_tokens))
     return parts
+
+
+#: Route enumeration transmitted per subdivided part (FR-011): bounded, so a
+#: route-heavy module cannot inflate every packet (the scale fixture's 734
+#: routes would otherwise blow the 12000-token budget at level 1). The full
+#: enumeration lives in the segment artifact; parts carry the head plus an
+#: explicit remainder count — the budget and the knowledge are both preserved.
+_MAX_PART_ENTRYPOINTS = 40
 
 
 def _part(
@@ -323,7 +352,17 @@ def _part(
     part["files"] = sorted(files)
     part["estimated_tokens"] = tokens
     part["subdivided_from"] = segment["id"]
-    part["entrypoints"] = sorted(segment["entrypoints"]) if index == 1 else []
+    # FR-011: reachability context is not a part-1 privilege. Segment grouping
+    # decided *which* unit these routes belong to; subdividing over budget
+    # distributes *files*, not knowledge.
+    entrypoints = list(segment["entrypoints"])
+    overflow = len(entrypoints) - _MAX_PART_ENTRYPOINTS
+    if overflow > 0:
+        entrypoints = entrypoints[:_MAX_PART_ENTRYPOINTS]
+        entrypoints.append(
+            f"+{overflow} more (full enumeration in segments/{segment['id']}.json)"
+        )
+    part["entrypoints"] = entrypoints
     return part
 
 

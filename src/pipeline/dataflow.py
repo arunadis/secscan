@@ -38,7 +38,13 @@ class Flow:
 
     @property
     def complete(self) -> bool:
-        return bool(self.path) and self.path[0] == self.source and self.path[-1] == self.sink
+        """True by construction: ``trace()`` emits a path only when it reaches a
+        sink, so a built flow always begins at the traced source and ends at a
+        sink. (Feature 016, research R3: the previous version compared node ids
+        against display labels — endpoint sources carry route labels, so every
+        endpoint-anchored flow silently reported incomplete and could never
+        support a `verified` verdict.)"""
+        return bool(self.path)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -166,7 +172,76 @@ class FlowGraph:
         )
 
 
+#: FR-007 reason string — one constant shared by the coverage note, the finding
+#: gap recorded during demotion, and tests, so they can never disagree.
+REACHABILITY_GAP_REASON = (
+    "reachability unconfirmed: endpoints and data-access facts were found, but "
+    "flow tracing connected none of them — authentication/authorization wiring, "
+    "source channels, or driver calls may use conventions not yet recognized; "
+    "treat presence-confirmed verdicts in this run as reachability-unproven"
+)
+
+
+#: annotations that make a non-endpoint node a security-relevant operation for
+#: gap-detection purposes. Driver-call sinks count via node type below.
+_OPERATION_ANNOTATIONS = frozenset(
+    {"user_controlled_input", "security_sink", "sensitive_data", "authentication_required"}
+)
+
+
+def reachability_unconfirmed(graph: dict[str, Any], flows: list[Flow]) -> bool:
+    """FR-007 trigger (exact zero per contracts/traceability §3): the graph has
+    positive evidence of externally reachable entry points AND of security-
+    relevant operations elsewhere (annotated files/symbols or datastore nodes),
+    yet tracing connected none — extraction coverage failed somewhere, and the
+    scan must say so rather than read as clean.
+
+    Operations are counted by annotation, not only by datastore nodes: when the
+    sink recognizer itself fails (unrecognized driver), no datastore nodes
+    exist, and "no sinks ⇒ no gap" would convert sink blindness into silence —
+    precisely the failure this rule exists to declare.
+    """
+    nodes = graph.get("nodes") or []
+    has_endpoints = any(node.get("type") == "endpoint" for node in nodes)
+    has_operations = any(
+        node.get("type") == "datastore"
+        or (
+            node.get("type") != "endpoint"
+            and set(node.get("annotations") or ()) & _OPERATION_ANNOTATIONS
+        )
+        for node in nodes
+    )
+    return bool(has_endpoints and has_operations and not flows)
+
+
+def reachability_gap_note(graph: dict[str, Any], flows: list[Flow]) -> str | None:
+    """The report coverage declaration (counts included), or None when the
+    trigger is not met. Shares its cue with REACHABILITY_GAP_REASON so the
+    report and finding gaps read as one condition (Principle V)."""
+    if not reachability_unconfirmed(graph, flows):
+        return None
+    nodes = graph.get("nodes") or []
+    endpoints = sum(1 for node in nodes if node.get("type") == "endpoint")
+    operations = sum(
+        1
+        for node in nodes
+        if node.get("type") != "endpoint"
+        and (
+            node.get("type") == "datastore"
+            or set(node.get("annotations") or ()) & _OPERATION_ANNOTATIONS
+        )
+    )
+    return (
+        f"reachability unconfirmed: {endpoints} entry point(s) and {operations} "
+        "security-relevant operation(s) were found, but flow tracing connected none "
+        "of them — authentication/authorization wiring, source channels, or driver "
+        "calls may use conventions not yet recognized; presence-confirmed verdicts "
+        "in this report are reachability-unproven"
+    )
+
+
 def trace_flows(graph: dict[str, Any], limit_per_source: int = 8) -> list[Flow]:
+    """All source-to-sink flows in the graph (deterministically ordered)."""
     """All source-to-sink flows in the graph (deterministically ordered)."""
     flow_graph = FlowGraph.from_document(graph)
     flows: list[Flow] = []

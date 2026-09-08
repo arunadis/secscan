@@ -106,9 +106,13 @@ def _normalize_methods(raw: str | None) -> str:
 
 # ------------------------------------------------------------- data access
 
+# Feature 016 (FR-004): driver convenience calls (`db.get`, `cursor.run`,
+# `conn.all`) are query entry points like `execute`, but only for receivers that
+# denote a data store — `session.get(...)` is Flask's dict read, not a DB call.
 _SQL_EXECUTE = re.compile(
-    r"(?:cursor|conn|connection|db|session|stmt|statement)\s*\.\s*"
-    r"(execute|executemany|query|raw|exec|Query|Exec|prepareStatement|createQuery)\s*\("
+    r"(?:(?:db|conn|cursor|stmt)\s*\.\s*(get|run|all|prepare|first)\s*\("
+    r"|(?:cursor|conn|connection|db|session|stmt|statement)\s*\.\s*"
+    r"(execute|executemany|query|raw|exec|Query|Exec|prepareStatement|createQuery)\s*\()"
 )
 _ORM_READ = re.compile(
     r"\.(?:objects\.(?:get|filter|all)|find_one|find_by|findAll|findById|"
@@ -141,20 +145,30 @@ _SENSITIVE_FIELDS = re.compile(
     r"date_of_birth|salary)(?![A-Za-z])"
 )
 
+# Feature 016 (FR-005): identifier-prefix families. The exact `authenticate\(`
+# literal missed `authenticateUser(` — the production form — so auth context
+# matches the camelCase family plus the common token/session verifiers.
 _AUTH_HINTS = re.compile(
     r"(?i)@login_required|@requires_auth|@authenticated|IsAuthenticated|"
-    r"@PreAuthorize|@Secured|@RolesAllowed|verify_token|check_session|current_user|"
-    r"require_auth|authenticate\("
+    r"@PreAuthorize|@Secured|@RolesAllowed|verify\w*(?:token|session)\s*\(|"
+    r"check\w*session|current_user|require_auth|authenticate\w*\s*\(|"
+    r"passport\.authenticate|jwt\.verify|bcrypt\.(?:compare|checkpw)"
 )
 _AUTHZ_HINTS = re.compile(
     r"(?i)@PreAuthorize|@Secured|@RolesAllowed|require_role|has_permission|"
     r"can_access|authorize\(|is_admin|check_permission|@permission_required"
 )
 
+# Feature 016 (FR-003): headers and cookies are attacker-controlled channels.
+# Identity asserted through an `x-user-email`-style header is invisible when
+# only body/query/params count as sources.
 _USER_INPUT_HINTS = re.compile(
-    r"(?i)request\.(?:args|form|json|data|body|params|query|GET|POST|get_json)|"
-    r"req\.(?:body|query|params)|@RequestParam|@RequestBody|@PathVariable|"
-    r"c\.Query\(|c\.Param\(|r\.URL\.Query\(|os\.Args"
+    r"(?i)request\.(?:args|form|json|data|body|params|query|GET|POST|get_json|"
+    r"headers|cookies)|"
+    r"req\.(?:body|query|params|headers|cookies)|@RequestParam|@RequestBody|"
+    r"@PathVariable|@RequestHeader|@CookieValue|\.getHeader\(|\bgetCookie\(|"
+    r"c\.Query\(|c\.Param\(|c\.Cookie\(|c\.GetHeader\(|r\.Header\.Get\(|"
+    r"r\.URL\.Query\(|os\.Args"
 )
 
 #: Value construction where the untrusted part is interpolated AFTER a prefix the
@@ -183,10 +197,55 @@ _SINK_HINTS = re.compile(
     r"innerHTML|dangerouslySetInnerHTML|child_process)\b"
 )
 
+# ----------------------------------------------------------------- wiring
+# Feature 016 (FR-001/FR-002; contracts/graph-wiring-contract.md §1):
+# registration-style attachment idioms. These are registrations, not call
+# sites, so name-based call resolution never links them — and without the link
+# the graph silently says "nothing calls the guard".
+#
+# Express-like: `router.use(mw)`, `app.use(mw)`, `app.use("/prefix", router)`;
+# Flask-like: `app.before_request(fn)`; aiohttp: `app.middlewares.append(fn)`;
+# Gin/Echo: `r.Use(mw)`; plus middleware arguments in route registrations.
+_WIRING_USE = re.compile(
+    r"(?:(?:router|app|application|server|bp|api)\s*\.\s*use\s*\(([^)]*)\)"
+    r"|\.before_(?:app_)?request\s*\(\s*([A-Za-z_]\w*)\b"
+    r"|\.middlewares\.(?:append|appendleft)\s*\(\s*([A-Za-z_]\w*)\b"
+    r"|\b(?:[rReE]|engine|routes?)\.Use\s*\(([^)]*)\))"
+)
+_WIRING_ROUTE = re.compile(
+    r"@?[\w.]*\.(get|post|put|patch|delete|head|options)\(\s*[\"'](/[^\"']*)[\"']\s*,"
+    r"([^)]*)\)",
+    re.DOTALL,
+)
+_BARE_IDENT = re.compile(r"^[A-Za-z_$][\w$]*$")
+
+
+def _wiring_targets(segment: str) -> list[str]:
+    """Whole-argument identifiers registered as guards/handlers.
+
+    Only a top-level argument that is exactly a bare name counts:
+    `authenticateUser` yes; `(req, res) => {...}`, `mw.bind(null, key)` and
+    `mod.auth` no. Shapes outside that form degrade to the unresolved-wiring
+    record (contracts §6) rather than guessed edges.
+    """
+    args, depth, current = [], 0, ""
+    for char in segment:
+        if char in "([{":
+            depth += 1
+        elif char in ")]}" and depth > 0:
+            depth -= 1
+        if char == "," and depth == 0:
+            args.append(current)
+            current = ""
+            continue
+        current += char
+    args.append(current)
+    return sorted({arg.strip() for arg in args if _BARE_IDENT.match(arg.strip())})
+
 
 def enrich(facts: FileFacts, text: str) -> None:
     """Attach endpoints, data access, and security annotations to ``facts``."""
-    from pipeline.extract import DataAccess, Endpoint
+    from pipeline.extract import DataAccess, Endpoint, Wiring
 
     lines = text.splitlines()
 
@@ -238,7 +297,7 @@ def enrich(facts: FileFacts, text: str) -> None:
             DataAccess(
                 symbol=facts.symbol_at(line),
                 operation="execute",
-                detail=match.group(1),
+                detail=match.group(1) or match.group(2),
                 line=line,
                 unsafe_interpolation=unsafe,
             )
@@ -255,6 +314,26 @@ def enrich(facts: FileFacts, text: str) -> None:
                 )
             )
     facts.data_access.sort(key=lambda d: (d.line, d.operation, d.detail))
+
+    # ---- wiring registrations (feature 016, FR-001/FR-002) ---------------
+    seen_wiring: set[tuple[str | None, str]] = set()
+    for match in _WIRING_USE.finditer(text):
+        args = next(g for g in match.groups() if g is not None)
+        line = text[: match.start()].count("\n") + 1
+        for target in _wiring_targets(args):
+            if (None, target) in seen_wiring:
+                continue
+            seen_wiring.add((None, target))
+            facts.wiring.append(Wiring(target=target, route=None, line=line))
+    for match in _WIRING_ROUTE.finditer(text):
+        route = f"{match.group(1).upper()} {match.group(2)}"
+        line = text[: match.start()].count("\n") + 1
+        for target in _wiring_targets(match.group(3)):
+            if (route, target) in seen_wiring:
+                continue
+            seen_wiring.add((route, target))
+            facts.wiring.append(Wiring(target=target, route=route, line=line))
+    facts.wiring.sort(key=lambda w: (w.line, w.route or "", w.target))
 
     # ---- file-level security annotations --------------------------------
     annotations: set[str] = set()

@@ -27,6 +27,12 @@ typed integration points), the code graph, and traced data flows.
    different validation rules; one becomes an injection vector for the other.
 6. **Attack paths.** Chain existing findings into end-to-end paths: entry point →
    weakness → weakness → impact.
+7. **Guard attachment consistency.** When the review input includes a guard-
+   attachment matrix, treat divergences as evidence: a route module missing a guard
+   its siblings all attach, or a registration listed as unresolved, is inconsistent
+   protection — name it in the narrative (with the component and which guard), never
+   silently, and never upgrade it to a finding on your own: it directs attention, the
+   deterministic pipeline decides what is reportable.
 
 ## Constraints
 

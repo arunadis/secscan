@@ -35,14 +35,32 @@ TRIAGE_PROMPT = "triage_finding.md"
 BAND_ORDER = ("Low", "Medium", "High", "Critical")
 
 #: Credential-class findings: the reasoner never sees the matched value, so
-#: ``refuted`` is invalid by construction for these (FR-008).
+#: ``refuted`` is invalid by construction for these (FR-008). Feature 016
+#: (clarify Q2): format-detected archetype rules (client-asserted identity)
+#: share the gate — demonstrated shape is presence-valid.
 CREDENTIAL_CWES = frozenset({"CWE-798", "CWE-522"})
+
+
+def is_unrefutable_finding(finding: dict[str, Any]) -> bool:
+    """Credential-class (structural blindness) ∪ archetype pack (presence-valid)."""
+    if is_credential_finding(finding):
+        return True
+    from pipeline import identity_rules
+
+    return str(finding.get("cwe", "")).upper() in identity_rules.no_refute_cwes()
 
 #: Control-shaped annotations on graph nodes whose *files* seed the candidate
 #: control set (research R4 — the baseline false positives' disproofs lived in
-#: exactly these places).
+#: exactly these places). Feature 016 adds `unattached_security_guard`: an
+#: annotated-but-unwired guard is exactly the file a triage round should see.
 CONTROL_ANNOTATIONS = frozenset(
-    {"authentication_required", "authorization_required", "security_sink", "trust_boundary"}
+    {
+        "authentication_required",
+        "authorization_required",
+        "security_sink",
+        "trust_boundary",
+        "unattached_security_guard",
+    }
 )
 
 #: Upper bound on candidate-control entries per packet (sheds shed whole entries,
@@ -311,11 +329,11 @@ def parse_verdict(
             None,
             f"answer finding_id {document.get('finding_id')!r} does not match {fid!r}",
         )
-    if document.get("verdict") == "refuted" and is_credential_finding(finding):
+    if document.get("verdict") == "refuted" and is_unrefutable_finding(finding):
         return ParsedVerdict(
             fid,
             None,
-            "credential-class findings cannot be refuted by reasoning (FR-008)",
+            "credential-class and format-detected findings cannot be refuted by reasoning (FR-008)",
         )
     texts = [
         str(document.get(k, ""))

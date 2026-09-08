@@ -81,6 +81,24 @@ def scope_to_project(findings: list[dict[str, Any]], root: Path) -> list[dict[st
     return kept
 
 
+def _lockfile_skip_reason(root: Path, lockfile: str) -> str:
+    """Feature 017 (FR-007): the skip reason must describe the artifact state,
+    not a filesystem guess — a lockfile that exists in a nested package or was
+    excluded from the analysis context is "present but out of tool scope",
+    never "this project does not have it"."""
+    nested = sorted(
+        path.relative_to(root).as_posix()
+        for path in root.rglob(lockfile)
+        if not any(is_skipped_dir(part) for part in path.relative_to(root).parts)
+    )
+    if nested:
+        return (
+            f"requires {lockfile} at the member root; it is present only at "
+            f"{', '.join(nested)} — outside this tool's scan scope"
+        )
+    return f"requires {lockfile}, which this project does not have"
+
+
 def run_external_scans(
     store: ArtifactStore,
     roots: dict[str, Path],
@@ -149,7 +167,7 @@ def run_external_scans(
             run = runner.ToolRun(
                 entry.id,
                 runner.STATUS_SKIPPED,
-                reason=f"requires {lockfile}, which this project does not have",
+                reason=_lockfile_skip_reason(root, lockfile),
             )
             runs.append(run)
             limitations.append(

@@ -548,6 +548,32 @@ Tooling, execution, and reporting (built and tested):
   evaluated against flows (consent-before-collection, deletion paths, regulated
   data safeguards); applicability modes are hybrid (default — detected candidates
   suggested, never evaluated until declared), declared-only, or inferred-only
+- ✅ Flow & graph completeness (feature 016): the deterministic substrate says
+  when it cannot see. Registration-style wiring (`router.use(auth)`, middleware
+  arguments, `before_request`, `Use(…)`) becomes traversable edges, so guards
+  sit on the paths they protect; request headers/cookies count as attacker-
+  controlled sources; driver convenience calls (`db.get|run|all`) count as data
+  access; unattached guards are annotated instead of invisible; unresolved
+  wiring is recorded per occurrence — never guessed. When entry points and
+  security-relevant operations exist but no flow connects them, the report
+  declares a named reachability gap and reachability-dependent verdicts demote.
+  Verification splits presence-confirmed from traced end-to-end in every summary,
+  a control a finding implicates can never refute it (deterministic gate and
+  triage round alike), and a versioned rule pack detects client-asserted-identity
+  middleware (CWE-290: trusted header, no credential) as format detections the
+  reasoning round can downgrade or flag but never refute
+- ✅ Outcome-quality hardening (feature 017): the verdict catalogue for
+  presence-proven classes is a versioned contract (identity-archetype members
+  verify on presence, demote only under a declared reachability gap); the
+  deterministic rule's provenance (Detection: format + rule id) survives to the
+  report alongside model findings at the same site; report families fold one
+  client-asserted-identity channel into anchor + dependents; presence-proven
+  findings expose exposure-specific uncertainty ("weakness proven at this
+  location; exposure path unconfirmed") instead of generic plausibility;
+  coverage notes dedupe per (file, cause); tool skip reasons describe the
+  artifact's actual state; identical triage questions batch into one answer
+  slot. Resume keys for extraction stages carry tool + recognizer versions, so
+  upgrading secscan can never silently reuse a stale code graph
 
 Multi-repo workspaces (Phase 6 / US4 — built and tested):
 

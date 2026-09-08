@@ -106,6 +106,24 @@ prints instructions rather than doing it. When the snapshot passes
 `staleness_threshold_days` (default 90), the report says so — an out-of-date
 snapshot is disclosed, never presented as current.
 
+## `identity_archetype_rules.json` — client-asserted identity (feature 016)
+
+Deterministic detection of the "identity asserted by a client-controlled header or
+cookie, no credential verified" archetype (CWE-290), plus `guard_names`, the shared
+catalogue of identifier families that mean "security decision" (used both to wire
+registration-style guards into the graph and to annotate unattached guards).
+
+Rule shape extends the misconfig discipline: a rule fires on a *function* only when
+`identity_read` matches its body, **every** pattern in `requires_absent` (the
+credential-verification idioms) is absent, and `dispatch` matches. Findings are
+format detections — the reasoning triage round may downgrade them from cited
+context or flag them, but never refute them. Every finding stamps
+`identity-archetype@<version>:<rule-id>` in `tool_ref`.
+
+Add a stack's conventions by adding a rule entry (or guard-name family); no
+pipeline-stage change is required. Validation happens at load: duplicate ids,
+missing fields, bad regexes, or unknown CWEs fail the build, never the scan.
+
 ---
 
 ## Adding an audit adapter

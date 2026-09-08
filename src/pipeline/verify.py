@@ -7,7 +7,8 @@ path from :mod:`pipeline.dataflow` decides the verdict.
               with the entry point and preconditions identified
   plausible - only a partial path could be traced; the gap is documented
   disproven - the trace refutes the finding (e.g. the sink is unreachable from
-              any external source, or a mitigating control sits on every path)
+              any external source, or a mitigating control the finding did not
+              implicate sits on every path)
 
 Disproven findings never reach the report.
 """
@@ -21,6 +22,57 @@ from pipeline.dataflow import Flow, find_flow_for_location
 
 #: annotations that, on the path, indicate an enforced control
 MITIGATING = ("authorization_required", "authentication_required")
+
+#: Presence is itself the finding for these classes (feature 017, FR-001):
+#: hard-coded secrets and dangerous configuration states are valid by the
+#: code's presence alone. Long-standing static members plus every class the
+#: identity-archetype pack ships (its detectors are design-committed as
+#: presence-valid) — the pack extends the contract without a stage edit.
+_STATIC_PRESENCE = (
+    "CWE-798", "CWE-259", "CWE-256", "CWE-522", "CWE-532",
+    "CWE-352", "CWE-942", "CWE-306", "CWE-489", "CWE-1188", "CWE-295",
+    "CWE-1004",
+)
+
+#: presence classes whose verdict strength still rests on reachability of the
+#: weakness: under the run's reachability gap these demote, others hold.
+_REACHABILITY_SENSITIVE_PRESENCE = frozenset({"CWE-306", "CWE-290"})
+
+
+def presence_valid_cwes() -> frozenset[str]:
+    """The union: static config/secret classes + any class the identity
+    archetype pack ships (its rules are defined as presence-valid)."""
+    from pipeline import identity_rules
+
+    return frozenset(_STATIC_PRESENCE) | identity_rules.no_refute_cwes()
+
+
+def implicated_locations(finding: dict[str, Any]) -> set[str]:
+    """``file``, ``file#symbol`` and symbol names the finding blames.
+
+    Used to decide whether a mitigating-control validation on the traced path
+    *is* the guard the finding questions: evidence and related-symbol markers
+    carry the finding's whole accusation perimeter, never only its headline
+    location.
+    """
+    targets: set[str] = set()
+    candidates = [finding.get("location") or {}]
+    candidates.extend(finding.get("evidence") or ())
+    for candidate in candidates:
+        file = str(candidate.get("file") or "")
+        if not file:
+            continue
+        targets.add(file)
+        symbol = candidate.get("symbol")
+        if symbol:
+            targets.add(symbol)
+            targets.add(f"{file}#{symbol}")
+    for ref in finding.get("related_symbols") or ():
+        ref = str(ref)
+        targets.add(ref)
+        if "#" in ref:
+            targets.add(ref.rsplit("#", 1)[-1])
+    return targets
 
 
 class UnresolvedLocation(RuntimeError):
@@ -39,9 +91,15 @@ class Verdict:
     gap: str | None = None
     path: tuple[str, ...] = ()
     flow: Flow | None = None
+    #: Feature 016 (traceability contract §1): what the strongest verdict rests
+    #: on — a walked path ("traced") or the weakness's presence in source
+    #: ("presence"). Written whenever status is "verified".
+    basis: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {"status": self.status}
+        if self.basis:
+            out["basis"] = self.basis
         if self.gap:
             out["gap"] = self.gap
         if self.path:
@@ -57,10 +115,14 @@ class Verifier:
         graph: dict[str, Any],
         flows: list[Flow],
         business_flows: dict[str, Any] | None = None,
+        reachability_unconfirmed: bool = False,
     ) -> None:
         self.graph = graph
         self.flows = flows
         self.nodes = {node["id"]: node for node in graph["nodes"]}
+        # FR-009: while the run-level reachability gap is active, presence
+        # verdicts for reachability-sensitive classes may not stand as verified.
+        self.reachability_unconfirmed = reachability_unconfirmed
         self.business_flows = {
             str(flow["id"]): flow
             for flow in (business_flows or {}).get("flows", [])
@@ -93,7 +155,7 @@ class Verifier:
             )
 
         if flow.complete and flow.transforms is not None:
-            return Verdict(status="verified", path=readable, flow=flow)
+            return Verdict(status="verified", path=readable, flow=flow, basis="traced")
 
         return Verdict(
             status="plausible",
@@ -200,7 +262,15 @@ class Verifier:
         return f"{node['repo']}:{node['path']}" + (f"#{symbol}" if symbol else "")
 
     def _mitigated(self, flow: Flow, finding: dict[str, Any]) -> bool:
-        """True when an enforced control on the path refutes this finding."""
+        """True when an enforced control on the path refutes this finding.
+
+        A control the finding itself implicates can never refute it (feature
+        016): a finding located at, evidenced through, or naming as related the
+        very guard function annotated here asserts that guard is defective, and
+        marking the path ``authentication_required`` on its account would
+        convert the finding into its own disproof — silence by self-reference.
+        Only an *independent* annotated control on the path mitigates.
+        """
         if not flow.validations:
             return False
         cwe_id = finding["cwe"]
@@ -211,7 +281,12 @@ class Verifier:
         # Only authorization/authentication findings are refuted by such controls.
         if cwe_id not in ("CWE-862", "CWE-863", "CWE-285", "CWE-284", "CWE-306", "CWE-287"):
             return False
-        return any(hint in validation for validation in flow.validations for hint in MITIGATING)
+        implicated = implicated_locations(finding)
+        return any(
+            hint in validation and not any(target in validation for target in implicated)
+            for validation in flow.validations
+            for hint in MITIGATING
+        )
 
     def _no_flow_verdict(
         self, finding: dict[str, Any], repo: str, path: str, symbol: str | None
@@ -237,17 +312,24 @@ class Verifier:
         # the standard trace path and cannot come out verified without one
         # (FR-008, contract C4). Findings with no provenance field (analysis
         # stage) keep the prior behaviour.
-        if finding["cwe"] in (
-            "CWE-798", "CWE-259", "CWE-256", "CWE-522", "CWE-532",
-            # Feature 004: dangerous configuration states are presence findings
-            # too — `csrf().disable()` at the location is itself the finding.
-            "CWE-352", "CWE-942", "CWE-306", "CWE-489", "CWE-1188", "CWE-295",
-            "CWE-1004",
-        ) and (
+        if finding["cwe"] in presence_valid_cwes() and (
             finding.get("detection", "format") == "format"
         ):
+            # Feature 016→017 (FR-009/FR-001): presence classes whose verdict
+            # strength still rests on reachability (missing auth, header-asserted
+            # identity) demote while the run's reachability gap is active; the
+            # secret/config classes hold regardless — presence is their finding.
+            if finding["cwe"] in _REACHABILITY_SENSITIVE_PRESENCE and self.reachability_unconfirmed:
+                from pipeline.dataflow import REACHABILITY_GAP_REASON
+
+                return Verdict(
+                    status="plausible",
+                    gap=REACHABILITY_GAP_REASON,
+                    path=(f"{repo}:{path}" + (f"#{symbol}" if symbol else ""),),
+                )
             return Verdict(
                 status="verified",
+                basis="presence",
                 path=(f"{repo}:{path}" + (f"#{symbol}" if symbol else ""),),
             )
 
@@ -276,9 +358,24 @@ def apply_verification(
     graph: dict[str, Any],
     flows: list[Flow],
     business_flows: dict[str, Any] | None = None,
+    reachability_unconfirmed: bool | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Attach verdicts; returns (kept, disproven)."""
-    verifier = Verifier(graph, flows, business_flows=business_flows)
+    """Attach verdicts; returns (kept, disproven).
+
+    ``reachability_unconfirmed`` defaults to the shared computation
+    (feature 016, T022): pipeline, resume, and standalone callers agree by
+    construction — no flag threading.
+    """
+    if reachability_unconfirmed is None:
+        from pipeline import dataflow
+
+        reachability_unconfirmed = dataflow.reachability_unconfirmed(graph, flows)
+    verifier = Verifier(
+        graph,
+        flows,
+        business_flows=business_flows,
+        reachability_unconfirmed=reachability_unconfirmed,
+    )
     kept: list[dict[str, Any]] = []
     disproven: list[dict[str, Any]] = []
     for finding in findings:

@@ -23,8 +23,10 @@ def _scan_with_dangling_review(tmp_path: Path):
     write_config(root)
     original = run_mod._system_review_narrative
 
-    def poisoned(findings, workspace):
-        text = original(findings, workspace)
+    def poisoned(findings, workspace, **_ignored):
+        # The helper legitimately gained a graph kwarg in feature 016; this test
+        # seams the text, so it must tolerate the keyword.
+        text = original(findings, workspace, **_ignored)
         return (text + "\n\nSystemic risk concentrated in SEC-9999.").strip()
 
     run_mod._system_review_narrative = poisoned

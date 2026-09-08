@@ -431,6 +431,52 @@ def test_cwe_dataset_has_owasp_and_domain_coverage() -> None:
         assert 0.0 <= cwe.default_severity(identifier) <= 10.0
 
 
+# ---------------------------------------------------------- feature 016 deltas
+
+
+def test_verification_basis_additive_field() -> None:
+    """Feature 016 (contracts/traceability-contract.md §1): traced vs presence is
+    declared, and pre-016 artifacts without the field stay valid."""
+    doc = valid_finding()
+    for basis in ("traced", "presence"):
+        ok = copy.deepcopy(doc)
+        ok["verification"]["basis"] = basis
+        validate("finding", ok)
+    # backward compatibility: no basis at all
+    validate("finding", doc)
+    doc["verification"]["basis"] = "assumed"
+    with pytest.raises(SchemaError):
+        validate("finding", doc)
+
+
+def test_code_graph_unattached_guard_annotation_and_unresolved_wiring() -> None:
+    """Feature 016 (contracts/graph-wiring-contract.md §3/§6)."""
+    graph = valid_code_graph()
+    graph["nodes"][0]["annotations"] = ["unattached_security_guard"]
+    graph["unresolved_wiring"] = [
+        {
+            "file": "src/routes/clients.js",
+            "line": 9,
+            "name": "authenticateUser",
+            "reason": "no in-repo symbol with this name",
+        }
+    ]
+    validate("code_graph", graph)
+
+    missing_reason = copy.deepcopy(graph)
+    del missing_reason["unresolved_wiring"][0]["reason"]
+    with pytest.raises(SchemaError):
+        validate("code_graph", missing_reason)
+
+    # ordering is a writer guarantee, not a schema rule: entries merely typed
+    not_sorted = copy.deepcopy(graph)
+    not_sorted["unresolved_wiring"] = [
+        {"file": "b.js", "line": 2, "name": "b", "reason": "r"},
+        {"file": "a.js", "line": 1, "name": "a", "reason": "r"},
+    ]
+    validate("code_graph", not_sorted)
+
+
 # ------------------------------------------- feature 002 additive schema deltas
 #
 # T010. Every delta is additive, so these assert BOTH directions: new documents

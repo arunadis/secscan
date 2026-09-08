@@ -181,6 +181,32 @@ def cross_system_ids(findings: list[dict[str, Any]]) -> list[str]:
     return sorted(out)
 
 
+def _dedupe_gap_notes(notes: list[str]) -> list[str]:
+    """Feature 017 (FR-006): one note per (cause, file set). The escalation level
+    differs between otherwise-identical budget-drop lines (the same file deferred
+    at level 1 and again at level 2 prints twice); fold levels into the survivor.
+    """
+    groups: dict[tuple[str, str], list[str]] = {}
+    for note in notes:
+        match = re.search(r" at level (\d+)", note)
+        if match:
+            key = (note[: match.start()], note[match.end():])
+            groups.setdefault(key, []).append(match.group(1))
+        else:
+            groups.setdefault((note, ""), [])
+    out: list[str] = []
+    for (before, after), levels in groups.items():
+        if not levels:
+            out.append(before)
+            continue
+        if len(levels) == 1:
+            out.append(f"{before} at level {levels[0]}{after}")
+        else:
+            levels_text = ", ".join(sorted(set(levels), key=int))
+            out.append(f"{before} (levels {levels_text}){after}")
+    return sorted(out)
+
+
 def _resolution_tiers(
     reported: list[dict[str, Any]], rejected: list[dict[str, Any]] | None
 ) -> dict[str, int]:
@@ -248,7 +274,17 @@ def _gap_details(
     security_name = re.compile(r"(?i)security|firewall|acl|auth")
 
     details: list[dict[str, Any]] = []
-    for record in records:
+    seen_records: set[tuple[str, str, str]] = set()
+    for record in sorted(
+        records,
+        key=lambda r: (str(r.get("file", "")), str(r.get("cause", "")),
+                       str(r.get("segment_id", ""))),
+    ):
+        key = (str(record.get("cause", "")), str(record.get("file", "")),
+               str(record.get("segment_id", "")))
+        if key in seen_records:
+            continue
+        seen_records.add(key)
         path = record["file"]
         name = path.rsplit("/", 1)[-1]
         critical = bool(
@@ -365,7 +401,7 @@ def build_report(
         "clean": not reported,
     }
     if coverage_gaps:
-        coverage["gaps"] = sorted(set(coverage_gaps))
+        coverage["gaps"] = _dedupe_gap_notes(coverage_gaps)
     if gap_records:
         coverage["gap_details"] = _gap_details(gap_records, graph)
     coverage["resolution_tiers"] = _resolution_tiers(reported, rejected)
@@ -444,7 +480,44 @@ def build_report(
     if suppressions:
         report["suppressions"] = report_suppressions
     if awaiting:
-        report["awaiting_verification"] = sorted(awaiting, key=lambda a: a["finding_id"])
+        # Feature 017 (FR-008): identical question text is one operator answer —
+        # group before publishing; each entry carries every bound finding id.
+        grouped_questions: dict[
+            tuple[str, str], dict[str, Any]
+        ] = {}  # (question, provenance) -> item
+        grouped_sorted = sorted(awaiting, key=lambda a: a["finding_id"])
+        for item in grouped_sorted:
+            key = (item["question"], item.get("provenance", "triage"))
+            entry = grouped_questions.get(key)
+            if entry is None:
+                entry = {
+                    "finding_id": item["finding_id"],
+                    "finding_ids": [item["finding_id"]],
+                    "location": item["location"],
+                    "question": item["question"],
+                    "provenance": item.get("provenance", "triage"),
+                }
+                if item.get("settling_evidence_hint"):
+                    hints = {item["settling_evidence_hint"]}
+                    entry["_hints"] = hints
+                grouped_questions[key] = entry
+            else:
+                entry["finding_ids"].append(item["finding_id"])
+                if len(entry["finding_ids"]) > 1:
+                    entry["question"] = entry["question"]  # unchanged text
+                if item.get("settling_evidence_hint"):
+                    hints = entry.setdefault("_hints", set())
+                    hints.add(item["settling_evidence_hint"])
+        rendered_entries: list[dict[str, Any]] = []
+        for entry in grouped_questions.values():
+            hints = entry.pop("_hints", None)
+            if hints:
+                entry["settling_evidence_hint"] = "; ".join(sorted(hints))
+            entry["finding_ids"] = sorted(entry["finding_ids"])
+            rendered_entries.append(entry)
+        report["awaiting_verification"] = sorted(
+            rendered_entries, key=lambda a: a["finding_ids"][0]
+        )
     if flow_coverage:
         # Feature 015 (FR-014): when the business-flow round ran, its coverage
         # ledger is declared in the report — analyzed flows, partial flows with
@@ -478,12 +551,39 @@ def _executive_summary(
     verified = sum(
         1 for f in reported if (f.get("verification") or {}).get("status") == "verified"
     )
+    # Feature 016 (traceability contract §2): a "complete source-to-sink path" claim
+    # may quantify only traced findings — presence confirmation verifies the
+    # weakness's code is present, not that it was reached.
+    traced = sum(
+        1
+        for f in reported
+        if (f.get("verification") or {}).get("basis") == "traced"
+    )
+    presence = sum(
+        1
+        for f in reported
+        if (f.get("verification") or {}).get("status") == "verified"
+        and (f.get("verification") or {}).get("basis") == "presence"
+    )
     lead = (
         f"Scanned {scope} under the '{profile.name}' profile. "
-        f"{len(reported)} finding(s): {counts}. "
-        f"{verified} were statically verified with a complete source-to-sink path."
+        f"{len(reported)} finding(s): {counts}."
     )
-    if verified == 0:
+    if verified:
+        pieces = []
+        if traced:
+            pieces.append(
+                f"{traced} statically verified with a complete source-to-sink path"
+            )
+        if presence:
+            pieces.append(f"{presence} presence-confirmed")
+        lead += f" {verified} verified (" + "; ".join(pieces) + ")."
+        if presence:
+            lead += (
+                " Presence-confirmed findings assert the weakness's code is present; "
+                "reachability from an entry point was not traced for them."
+            )
+    else:
         # FR-041. Stating the count without saying what it means invites the
         # reader to treat plausible findings as confirmed ones — which is how the
         # reviewed benchmark's honest caveats still produced an over-alarming read.
@@ -664,8 +764,10 @@ def render_markdown(report: dict[str, Any], system_review: str = "") -> str:
         )
         add("")
         for item in report["awaiting_verification"]:
+            members = item.get("finding_ids") or [item["finding_id"]]
             location = item.get("location") or {}
-            add(f"- **{item['finding_id']}** (`{location.get('repo')}:{location.get('file')}`)")
+            member_text = ", ".join(f"**{m}**" for m in members)
+            add(f"- {member_text} (`{location.get('repo')}:{location.get('file')}`)")
             add(f"  - Question: {item['question']}")
             if item.get("settling_evidence_hint"):
                 add(f"  - Settling evidence: {item['settling_evidence_hint']}")
@@ -788,6 +890,18 @@ def render_markdown(report: dict[str, Any], system_review: str = "") -> str:
     return "\n".join(lines)
 
 
+def _render_family_lines(add, finding: dict[str, Any]) -> None:
+    relationships = finding.get("relationships") or []
+    # dependent link on THIS finding points at its anchor
+    for rel in relationships:
+        if rel.get("type") == "dependent":
+            add(f"- **Family**: part of the {rel['target_id']} family — {rel.get('reason', '')}")
+    # an anchor carries one 'related' link per dependent from the family builder
+    related = sorted({r["target_id"] for r in relationships if r.get("type") == "related"})
+    if related:
+        add(f"- **Related findings**: {', '.join(related)} (same weakness family)")
+
+
 def _render_finding(add, finding: dict[str, Any]) -> None:
     location = finding["location"]
     where = f"{location['file']}"
@@ -805,6 +919,11 @@ def _render_finding(add, finding: dict[str, Any]) -> None:
     badge = verification.get("status", "unverified")
 
     add(f"#### {finding['id']} — {cwe.name_for(finding['cwe'])} [{badge}]")
+    # Feature 017 (FR-005): a format-detected finding graded plausible for
+    # reachability only must read as proven-but-exposure-unknown, never vague
+    # "plausible — maybe not real".
+    if badge == "plausible" and finding.get("detection") == "format":
+        add("**Weakness proven at this location; exposure path unconfirmed.**")
     add("")
     add(
         f"- **CWE**: {finding['cwe']}"
@@ -826,6 +945,9 @@ def _render_finding(add, finding: dict[str, Any]) -> None:
         )
     )
     add(f"- **Location**: `{location['repo']}` → `{where}`")
+    # Feature 017 (FR-004): family presentation — anchors list their dependents,
+    # dependents point back, both stay countable.
+    _render_family_lines(add, finding)
     triage_block = finding.get("triage")
     if triage_block:
         previous = triage_block.get("previous_severity")

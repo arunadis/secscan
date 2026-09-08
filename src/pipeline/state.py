@@ -19,6 +19,13 @@ from typing import Any
 from pipeline.schemas import SCHEMA_VERSION, validate
 
 TOOL_VERSION = "0.1.0"
+
+#: Extraction-engine version (feature 017, FR-002): bump whenever enrichers' or
+#: the graph builder's recognition changes (new source channels, driver
+#: conventions, wiring idioms, annotation families). Joins the build_code_graph
+#: resume key so an upgraded tool can never silently reuse a graph a previous
+#: recognizer set built; release notes must call the invalidation out.
+EXTRACTOR_VERSION = "016"
 SCAN_DIR_NAME = ".secscan"
 #: Plain-text progress trace written by every run (feature 011). A diagnostic
 #: side file, not an artifact: no envelope, excluded from determinism checks.

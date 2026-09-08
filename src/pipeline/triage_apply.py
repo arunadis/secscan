@@ -15,6 +15,7 @@ from pipeline import cwe
 from pipeline.calibrate import CREDITED_CONTROL_FACTOR
 from pipeline.triage import ParsedVerdict
 from pipeline.triage_evidence import verify_citations
+from pipeline.verify import implicated_locations
 
 STAGE = "finding_triage"
 
@@ -188,6 +189,36 @@ def apply_outcomes(
             decisions.append(
                 {**base, "outcome": "degraded-flagged", "applied_effect": "flag-attached",
                  "reason": "citation re-verification failed", "citations": decision_citations}
+            )
+            kept.append(finding)
+            continue
+
+        # FR-020 (feature 016, clarify Q1): a citation verified as *text* is not a
+        # verified *control*. When the cited location is one the finding accuses,
+        # the verdict is self-refutation and is rejected wholesale — the finding
+        # proceeds as untriaged, flagged for a human answer.
+        perimeter = implicated_locations(finding)
+        offending = [
+            citation
+            for citation in citations_raw
+            if str(citation.get("file") or "") in perimeter
+            or str(citation.get("symbol") or "") in perimeter
+        ]
+        if offending:
+            attach_flag(
+                finding,
+                "A proposed refutation/downgrade cites the very code the finding "
+                "implicates; self-reference cannot prove a control. Please confirm "
+                "the control is independent, or the finding stands. "
+                + str(document.get("rationale") or ""),
+                hint="; ".join(
+                    f"{c.get('file')}#{c.get('symbol') or '<module>'}" for c in offending
+                )[:300],
+            )
+            decisions.append(
+                {**base, "outcome": "rejected-perimeter", "applied_effect": "flag-attached",
+                 "reason": "citation resolves to a location the findings implicate",
+                 "citations": decision_citations}
             )
             kept.append(finding)
             continue

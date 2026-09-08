@@ -322,7 +322,94 @@ class ContextBuilder:
                 continue
             seen.add(arrow)
             lines.append(arrow)
-        return "\n".join(sorted(lines)[:40])
+        summary = "\n".join(sorted(lines)[:40])
+        digest = self._role_digest(segment, index)
+        if digest:
+            summary = f"{summary}\n{digest}" if summary else digest
+        return summary
+
+    def _role_digest(
+        self, segment: dict[str, Any], index: dict[str, dict[str, Any]]
+    ) -> str:
+        """Per-file role lines (feature 016, FR-013/FR-016): callers, wiring-attached
+        guards, and the unattached-guard marker — so a file's structural role is
+        visible even when the analysing part contains no full edges.
+
+        ``guards: none recorded`` appears only when a sibling route-bearing file in
+        this segment attaches a guard (clarify Q4: comparative signal as evidence,
+        never a finding).
+        """
+        repo = segment["repos"][0]
+        callers: dict[str, set[str]] = {}
+        file_guards: dict[str, set[str]] = {}
+        for edge in self.graph["edges"]:
+            if edge["type"] in ("contains",):
+                continue
+            source = index.get(edge["from"])
+            target = index.get(edge["to"])
+            if not source or not target:
+                continue
+            if (
+                target["repo"] == repo
+                and target["path"] in segment["files"]
+                and source["path"] != target["path"]
+            ):
+                # 'calls'/'handler' from an endpoint node means wiring, not a
+                # caller of the file — route scopes attribute the guard instead
+                if not (edge["type"] == "handler" and source.get("type") == "endpoint"):
+                    callers.setdefault(target["path"], set()).add(
+                        source.get("symbol") or source["path"]
+                    )
+            if (
+                edge["type"] == "handler"
+                and source.get("type") == "endpoint"
+                and source.get("path") in segment["files"]
+                and source["repo"] == repo
+            ):
+                file_guards.setdefault(source["path"], set()).add(
+                    target.get("symbol") or target["path"]
+                )
+        route_files = {
+            node["path"]
+            for node in self.graph["nodes"]
+            if node.get("type") == "endpoint"
+            and node.get("repo") == repo
+            and node["path"] in segment["files"]
+        }
+        any_guarded = any(file_guards.get(path) for path in route_files)
+        unattached = {
+            node["path"]
+            for node in self.graph["nodes"]
+            if node.get("repo") == repo
+            and node["path"] in segment["files"]
+            and "unattached_security_guard" in (node.get("annotations") or ())
+        }
+        rows: list[str] = []
+        for relative in sorted(segment["files"])[:40]:  # bounded: Principle II
+            bits: list[str] = []
+            refs = sorted(callers.get(relative) or ())
+            if refs:
+                # Name-based call resolution fans out sharply on shared helper
+                # names; a digest row is evidence of linkage, not a census.
+                shown = refs[:12]
+                suffix = f", +{len(refs) - 12} more" if len(refs) > 12 else ""
+                bits.append("referenced from: " + ", ".join(shown) + suffix)
+            else:
+                bits.append("referenced from: none")
+            guards = file_guards.get(relative)
+            if guards:
+                bits.append("guards: " + ", ".join(sorted(guards)))
+            elif relative in route_files and any_guarded:
+                bits.append("guards: none recorded")
+            if relative in unattached:
+                bits.append("unattached security guard")
+            rows.append(f"{relative} :: {' | '.join(bits)}")
+        if not rows:
+            return ""
+        remainder = len(segment["files"]) - len(rows)
+        if remainder > 0:
+            rows.append(f"(+{remainder} further file rows omitted from this part's digest)")
+        return "-- file roles --\n" + "\n".join(rows)
 
     def _security_symbols(self, segment: dict[str, Any]) -> list[str]:
         repo = segment["repos"][0]

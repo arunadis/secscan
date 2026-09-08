@@ -1,0 +1,44 @@
+{
+  "version": "1",
+  "dataset_date": "2026-09-07",
+  "_doc": [
+    "Client-asserted-identity archetype rules and the shared guard-name",
+    "catalogue (feature 016, FR-006/FR-014). Matching semantics:",
+    "contracts/identity-archetype-rules.md. Rules match code SHAPE only;",
+    "no identity value is ever captured into a finding (Principle III)."
+  ],
+  "guard_names": [
+    "authenticat\\w+",
+    "authoriz\\w+",
+    "require_?auth\\w*",
+    "require_?role\\w*",
+    "check_?(?:session|permission\\w*|auth\\w*)",
+    "verify_?(?:token|session|auth\\w*)",
+    "guard\\w+",
+    "is_?authenticated",
+    "current_?user"
+  ],
+  "rules": [
+    {
+      "id": "node-header-identity-no-credential",
+      "stacks": ["node"],
+      "file_globs": ["**/*.js", "**/*.ts", "**/*.tsx"],
+      "scope": "function",
+      "identity_read": "req\\.(?:headers|cookies)[\\[.][\\w'\".-]*",
+      "requires_absent": [
+        "jwt\\.verify",
+        "passport\\.authenticate",
+        "bcrypt\\.(?:compare|checkpw)",
+        "verify\\w*Token\\s*\\(",
+        "compare(?:Password)?\\s*\\(",
+        "jsonwebtoken\\."
+      ],
+      "dispatch": "\\bnext\\s*\\(",
+      "cwe": "CWE-290",
+      "severity_score": 9.1,
+      "title": "Identity asserted from a client-controlled request channel with no credential",
+      "description": "The function reads identity from a client-controlled request header or cookie and dispatches without verifying any credential, signature, or token. The header is attacker-supplied, so the caller selects which account the handler acts as.",
+      "recommendation": "Verify a server-issued credential (signed token, session lookup with signature/expiry checks, mTLS) before dispatch; rebuild req.identity exclusively from the verification result."
+    }
+  ]
+}

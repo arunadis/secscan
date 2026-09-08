@@ -53,6 +53,18 @@ answer: the value's legitimacy is decided by deterministic rules, not by you. Yo
 may still `downgrade` them from *context* (test code, dev-only surface) or
 `flag` them with a question.
 
+Format-detected archetype findings (e.g. client-asserted identity, CWE-290) are
+under the same rule: their shape is proven presence evidence. `refuted` is not an
+allowed answer; you may only `downgrade` from cited context or `flag`.
+
+## Hard rule: a control the finding implicates is not a refutation
+
+When a finding says "this guard is fake/weak", citing that guard as the control
+that neutralizes the finding is self-reference, not evidence — the pipeline rejects
+such verdicts wholesale (the finding proceeds as untriaged). Refuting needs an
+**independent** control elsewhere on the request path. A middleware name that says
+`auth` is a claim, not a proof: read what it verifies before citing it.
+
 ## Flagging rules
 
 - Flag only when the missing fact is genuinely outside the repository (not when

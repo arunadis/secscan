@@ -9,6 +9,7 @@ deepen with US4 on this same structure.
 from __future__ import annotations
 
 import argparse
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -72,6 +73,7 @@ def correlate(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
         canonical.append(primary)
 
     _link_systemic(canonical)
+    _link_identity_families(canonical)  # feature 017 (FR-004)
     return sorted(canonical, key=lambda f: f["id"])
 
 
@@ -120,6 +122,63 @@ def _link_systemic(findings: list[dict[str, Any]]) -> None:
                     "type": "same",
                     "reason": "same weakness class at a different location (systemic issue)",
                 }
+            )
+
+
+# ------------------------------------------------ identity-channel families
+
+#: Identity-bearing custom-header/cookie tokens (feature 017, FR-004). Narrow by
+#: design: `authorization` and bare `query` can never merge families — the token
+#: must name an identity on an `x-` channel, and provenance decides attachment.
+_IDENTITY_CHANNEL = re.compile(
+    r"(?i)\bx-[a-z0-9-]*(?:user|email|tenant|account|identity|subject|auth)[a-z0-9-]*\b"
+)
+
+
+def _identity_channel_tokens(finding: dict[str, Any]) -> set[str]:
+    """Identity-bearing channel tokens the finding's own text references."""
+    texts = [str(finding.get("description") or "")]
+    texts.extend(
+        str(e.get("reason") or "") for e in finding.get("evidence") or ()
+    )
+    out: set[str] = set()
+    for text in texts:
+        out.update(m.lower() for m in _IDENTITY_CHANNEL.findall(text))
+    return out
+
+
+def _is_pack_origin(finding: dict[str, Any]) -> bool:
+    return str(finding.get("tool_ref") or "").startswith("identity-archetype@")
+
+
+def _link_identity_families(findings: list[dict[str, Any]]) -> None:
+    """One trust-decision anchor + dependents per identity channel (FR-004).
+
+    Deterministic, conservative: only tokens proven identity-bearing by wording
+    (the narrow token rule), and membership requires the token in the finding's
+    own evidence/description — no graph-free guessing at linkage.
+    """
+    token_members: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for finding in findings:
+        for token in _identity_channel_tokens(finding):
+            token_members[token].append(finding)
+    for token, members in sorted(token_members.items()):
+        if len(members) < 2:
+            continue
+        ordered = sorted(members, key=lambda f: f["id"])
+        anchor = next((f for f in ordered if _is_pack_origin(f)), ordered[0])
+        for other in ordered:
+            if other is anchor:
+                continue
+            reason = (
+                f"same client-asserted identity channel ({token}); the trust-decision "
+                "finding anchors this family"
+            )
+            other.setdefault("relationships", []).append(
+                {"target_id": anchor["id"], "type": "dependent", "reason": reason}
+            )
+            anchor.setdefault("relationships", []).append(
+                {"target_id": other["id"], "type": "related", "reason": reason}
             )
 
 

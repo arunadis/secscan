@@ -132,6 +132,36 @@ def test_answer_files_identical_across_policies(tmp_path: Path, monkeypatch) -> 
     assert batch and batch == live
 
 
+def test_feature_016_paths_are_byte_identical_across_runs(tmp_path: Path) -> None:
+    """FR-019 for the new machinery: wiring edges, unattached-guard annotation,
+    unresolved-wiring record, reachability-gap note, archetype findings — all
+    deterministic, on both fixture shapes."""
+    from tests.fixtures import header_identity_app, unwired_connectivity_app
+    from tests.integration.conftest import silent_responder
+
+    def responder(request) -> str:
+        return oracle_responder(request) or silent_responder(request)
+
+    for build in (header_identity_app.build, unwired_connectivity_app.build):
+        # identical basenames: the scan root's name enters repo/segment ids
+        first_root = tmp_path / f"id-a-{build.__module__.rsplit('.', 1)[-1]}" / "site"
+        second_root = tmp_path / f"id-b-{build.__module__.rsplit('.', 1)[-1]}" / "site"
+        first_root.mkdir(parents=True)
+        second_root.mkdir(parents=True)
+        build(first_root)  # materializes <site>/<fixture-name>/
+        build(second_root)
+        write_config(first_root)
+        write_config(second_root)
+        run_mod.run_scan(first_root, responder=responder)
+        run_mod.run_scan(second_root, responder=responder)
+        first, second = _artifacts(first_root), _artifacts(second_root)
+        assert set(first) == set(second)
+        for name in sorted(first):
+            assert first[name] == second[name], (
+                f"{build.__module__}: {name} differs between identical runs"
+            )
+
+
 def test_rescanning_the_same_tree_is_stable(tmp_path: Path) -> None:
     from tests.fixtures.single_repo_shop import build
 

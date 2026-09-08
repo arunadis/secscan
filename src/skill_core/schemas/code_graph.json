@@ -9,6 +9,21 @@
     "edges"
   ],
   "properties": {
+    "unresolved_wiring": {
+      "type": "array",
+      "description": "Feature 016 (graph-wiring contract §6): registration-style wiring facts whose target name resolved to no in-repo symbol. Sorted by (file, line, name); present even when empty so old-artifact ambiguity is impossible.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file", "line", "name", "reason"],
+        "properties": {
+          "file": {"type": "string", "minLength": 1},
+          "line": {"type": "integer", "minimum": 1},
+          "name": {"type": "string", "minLength": 1},
+          "reason": {"type": "string", "minLength": 1}
+        }
+      }
+    },
     "nodes": {
       "type": "array",
       "items": {
@@ -130,7 +145,8 @@
                 "external_content_source",
                 "ai_config",
                 "llm_undetermined",
-                "boundary_labeled"
+                "boundary_labeled",
+                "unattached_security_guard"
               ]
             }
           }

@@ -38,6 +38,12 @@ def known_cwes() -> frozenset[str]:
     return frozenset(_data()["cwes"])
 
 
+def dataset_version() -> str:
+    """The shipped CWE map's data version — part of graph resume-key identity
+    (feature 017, FR-002), since CWE membership determines what normalizes."""
+    return str(_data()["version"])
+
+
 def validate_cwe(cwe: str) -> str:
     if cwe not in _data()["cwes"]:
         raise UnknownCWE(f"{cwe} is not in the shipped CWE dataset (v{_data()['version']})")

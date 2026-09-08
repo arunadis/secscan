@@ -8,6 +8,7 @@ edges are name-based in v1 and marked as such.
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,13 @@ class GraphBuilder:
         #: (repo, template sink node id) -> identifiers it renders, resolved to
         #: `renders` edges once every symbol is known
         self.template_bindings: dict[tuple[str, str], set[str]] = {}
+        #: (repo, path, route|None, target, line) registration facts awaiting
+        #: the second pass (feature 016, FR-001/FR-002)
+        self.wiring_facts: list[tuple[str, str, str | None, str, int]] = []
+        #: (repo, path) -> endpoint node ids registered by that file
+        self.endpoints_in_file: dict[tuple[str, str], list[str]] = {}
+        #: wiring facts whose target resolved to no in-repo symbol (FR-010)
+        self.unresolved_wiring: list[dict[str, Any]] = []
 
     # ------------------------------------------------------------- building
 
@@ -204,6 +212,7 @@ class GraphBuilder:
             handler = node_id(repo, facts.path, endpoint.symbol)
             if handler in self.nodes:
                 self.add_edge(endpoint_node, handler, "handler")
+            self.endpoints_in_file.setdefault((repo, facts.path), []).append(endpoint_node)
 
         for access in facts.data_access:
             store_node = self.add_node(
@@ -218,6 +227,9 @@ class GraphBuilder:
             if caller in self.nodes:
                 kind = {"read": "reads", "write": "writes"}.get(access.operation, "writes")
                 self.add_edge(caller, store_node, kind)
+
+        for wire in facts.wiring:
+            self.wiring_facts.append((repo, facts.path, wire.route, wire.target, wire.line))
 
     def _annotate_bypass_sites(self, facts: FileFacts, text: str) -> None:
         """Mark symbols that call a documented control-bypass syntax (feature 014).
@@ -280,6 +292,89 @@ class GraphBuilder:
                 if symbol.line_start <= sink.line <= symbol.line_end:
                     symbol.annotations = tuple(sorted(set(symbol.annotations) | set(marks)))
 
+    #: identifier families that mean "security decision" when they name a
+    #: function (feature 016, FR-006 contingency when the shipped catalogue
+    #: cannot load; the catalogue in identity_archetype_rules.json is the
+    #: single source of truth and is always used when available).
+    #: test/scaffold paths neither call production guards nor count as users
+    _TESTISH_PATH = re.compile(r"(?:__tests__|/tests?/|\.test\.|\.spec\.|_test\.)")
+
+    def _guard_name_patterns(self) -> tuple[re.Pattern[str], ...]:
+        from pipeline import identity_rules
+
+        return identity_rules.load_guard_names()
+
+    def resolve_wiring(self) -> None:
+        """Attach registration-style guards after every symbol exists (feature
+        016, FR-001/FR-002): the wired name may be defined in a file parsed
+        after the one registering it, so resolution is a second pass like
+        :meth:`resolve_calls`.
+
+        Edges made here: the wiring file *calls* the guard (so the call-graph
+        summary names the relationship), and every endpoint the registration
+        scopes — the whole file for a `use(…)` attachment, the named route for
+        a route-argument attachment — gains a `handler` edge, which is what lets
+        a flow traverse entry point → guard → sink. Names resolving to no
+        in-repo symbol make no edge and are recorded in ``unresolved_wiring``
+        (contracts/graph-wiring-contract.md §6).
+        """
+        unresolved: dict[tuple[str, str, int], str] = {}
+        facts_sorted = sorted(
+            set(self.wiring_facts),
+            key=lambda f: (f[0], f[1], f[2] or "", f[3], f[4]),
+        )
+        for repo, path, route, target_name, line in facts_sorted:
+            targets = sorted(
+                t
+                for t in self.by_symbol.get(target_name, ())
+                if self.nodes[t]["repo"] == repo
+            )
+            if not targets:
+                unresolved[(path, line, target_name)] = "no in-repo symbol with this name"
+                continue
+            file_node = node_id(repo, path)
+            for target in targets:
+                self.add_edge(file_node, target, "calls", resolution="name-based")
+            for endpoint_node in self.endpoints_in_file.get((repo, path), ()):
+                if route is not None and self.nodes[endpoint_node].get("route") != route:
+                    continue
+                for target in targets:
+                    self.add_edge(endpoint_node, target, "handler", resolution="name-based")
+        self.unresolved_wiring = [
+            {"file": file, "line": line, "name": name, "reason": reason}
+            for (file, line, name), reason in sorted(unresolved.items())
+        ]
+
+    def annotate_unattached_guards(self) -> None:
+        """Function nodes with guard-meaningful names and no inbound edge from
+        production code get the ``unattached_security_guard`` annotation
+        (feature 016, FR-006). Containment by their own file and references from
+        test files do not count as attachment."""
+        guard_names = self._guard_name_patterns()
+        inbound: dict[str, set[str]] = {}
+        for source, target, kind, _cross, _resolution in self.edges:
+            if kind == "contains":
+                continue
+            source_path = source.split(":", 1)[-1].split("#", 1)[0]
+            inbound.setdefault(target, set()).add(source_path)
+        for identifier in sorted(self.nodes):
+            node = self.nodes[identifier]
+            if node.get("type") != "function":
+                continue
+            symbol = node.get("symbol") or ""
+            if not any(pattern.match(symbol) for pattern in guard_names):
+                continue
+            referrers = {
+                path
+                for path in inbound.get(identifier, ())
+                if not self._TESTISH_PATH.search(path) and path != node["path"]
+            }
+            if referrers:
+                continue
+            node["annotations"] = sorted(
+                set(node.get("annotations") or []) | {"unattached_security_guard"}
+            )
+
     def resolve_calls(self) -> None:
         """Name-based call edge resolution (documented v1 limitation)."""
         for (repo, path), facts in sorted(self.facts.items()):
@@ -311,7 +406,12 @@ class GraphBuilder:
             }
             for source, target, kind, cross_repo, resolution in sorted(self.edges)
         ]
-        return {"nodes": nodes, "edges": edges}
+        # FR-010: present even when empty — an absent key would be ambiguous
+        # between "old artifact" and "nothing unresolved".
+        unresolved = sorted(
+            self.unresolved_wiring, key=lambda e: (e["file"], e["line"], e["name"])
+        )
+        return {"nodes": nodes, "edges": edges, "unresolved_wiring": unresolved}
 
 
 def language_for(path: Path) -> str | None:
@@ -357,7 +457,9 @@ def run(store: ArtifactStore, workspace: dict[str, Any]) -> dict[str, Any]:
             builder.add_file(repo, facts, text)
 
     builder.resolve_calls()
+    builder.resolve_wiring()
     builder.resolve_template_bindings()
+    builder.annotate_unattached_guards()
     document = builder.to_document()
     store.write("code-graph.json", "build_code_graph", document, "code_graph")
     return document

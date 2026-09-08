@@ -57,6 +57,50 @@ def test_reviewed_case_names_its_source_of_truth() -> None:
         assert case.target
 
 
+def test_defect_class_guard_hidden_trust(tmp_path) -> None:
+    """Feature 016 (SC-001/SC-004): the trust point hidden behind registration
+    wiring is its own release-blocking defect class."""
+    from pipeline.state import ArtifactStore
+    from tests.fixtures.header_identity_app import GROUND_TRUTH, build
+    from tests.integration.conftest import oracle_responder, silent_responder, write_config
+
+    root = tmp_path
+    build(root)
+    write_config(root)
+    result = run_mod.run_scan(
+        root,
+        responder=lambda request: oracle_responder(request) or silent_responder(request),
+    )
+    truth = GROUND_TRUTH["anchor_finding"]
+    anchors = [
+        f
+        for f in result.findings
+        if f["cwe"] == truth["cwe"]
+        and f["location"].get("symbol") == truth["symbol"]
+        and f["location"]["file"].endswith(truth["file"])
+    ]
+    assert len(anchors) == 1, "expected exactly one CWE-290 anchor finding"
+    assert anchors[0].get("detection") == "format"
+    # feature 017: grading-integrity — presence-proven format finding carries the
+    # basis and rule provenance, never degrades to generic plausibility
+    assert anchors[0]["verification"]["status"] == "verified"
+    assert anchors[0]["verification"]["basis"] in ("traced", "presence")
+    assert "identity-archetype@1:" in str(anchors[0].get("tool_ref"))
+    assert not any(
+        f["location"].get("symbol") in tuple(GROUND_TRUTH["safe_symbols"])
+        for f in result.findings
+    )
+
+    # The deterministic substrate that makes the finding possible: real edges.
+    store = ArtifactStore(root)
+    graph = store.read("code-graph.json")
+    assert any(
+        e["type"] == "handler"
+        and e["to"].endswith("src/middleware/auth.js#authenticateUser")
+        for e in graph["edges"]
+    )
+
+
 def test_usage_baseline_is_recorded_with_its_profile_and_target() -> None:
     """SC-013 is only measurable if the comparison is like-for-like."""
     payload = json.loads((Path(__file__).parent / "cases" / "baseline_usage.json").read_text())
@@ -698,6 +742,20 @@ def test_defect_class_supply_chain_detection(tmp_path) -> None:
     scd.test_confusion_and_mutable_exposure_is_found(tmp_path / "vulnerable")
     scd.test_unguarded_scope_records_guard_as_undetermined(tmp_path / "guard")
     scd.test_hardened_manifest_produces_zero_supply_chain_findings(tmp_path / "hardened")
+
+
+def test_defect_class_grading_integrity() -> None:
+    """Feature 017: grading-integrity is its own release-blocking defect class.
+
+    The per-class scan assertions ride test_defect_class_guard_hidden_trust (the
+    fixture scan asserts verified status, basis field, and pack provenance); this
+    test pins the deterministic rule the whole family rests on.
+    """
+    from pipeline import identity_rules
+    from pipeline.verify import presence_valid_cwes
+
+    assert "CWE-290" in identity_rules.no_refute_cwes()
+    assert "CWE-290" in presence_valid_cwes()
 
 
 def test_no_defect_class_regression_is_masked(benchmark_scan) -> None:

@@ -1,5 +1,5 @@
 {
-  "version": "2",
+  "version": "3",
   "sources": [
     "https://cwe.mitre.org/data/",
     "https://owasp.org/Top10/"
@@ -158,6 +158,15 @@
       "owasp": "A07",
       "domain": "authentication",
       "default_severity": 8.1,
+      "compliance": [
+        "PCI-DSS 8.1"
+      ]
+    },
+    "CWE-290": {
+      "name": "Authentication Bypass by Spoofing",
+      "owasp": "A07",
+      "domain": "authentication",
+      "default_severity": 9.1,
       "compliance": [
         "PCI-DSS 8.1"
       ]
