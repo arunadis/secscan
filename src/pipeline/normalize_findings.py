@@ -21,6 +21,9 @@ from pipeline.schemas import SchemaError, validate
 _JSON_BLOCK = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 #: request ids are `<segment-id>-l<escalation-level>`
 _REQUEST_SUFFIX = re.compile(r"-l\d+$")
+#: finding ids allocated by this module (`SEC-NNNN`); anything else a caller
+#: pre-assigns does not participate in the sequence.
+_ALLOCATED_ID = re.compile(r"^SEC-(\d+)$")
 
 
 class MalformedAnalysisOutput(ValueError):
@@ -47,6 +50,30 @@ class FindingNormalizer:
         identifier = f"SEC-{self._next:04d}"
         self._next += 1
         return identifier
+
+    @property
+    def next_id(self) -> int:
+        """The sequence number the next ``allocate_id`` call would use."""
+        return self._next
+
+    def reserve_through(self, identifier: str | int) -> None:
+        """Advance the counter past an externally assigned id.
+
+        Findings can be numbered outside this normalizer (pre-assigned ids in
+        raw analysis output; the dependency-audit sequence in
+        ``ingest_findings``). Reserving the high-water mark keeps a later
+        allocation from reissuing one — duplicate ids silently collapse or
+        misapply triage verdicts downstream. Ids outside the ``SEC-NNNN``
+        space do not participate in the sequence and reserve nothing.
+        """
+        if isinstance(identifier, int):
+            number = identifier
+        else:
+            match = _ALLOCATED_ID.match(str(identifier).strip())
+            if match is None:
+                return
+            number = int(match.group(1))
+        self._next = max(self._next, number + 1)
 
     # ------------------------------------------------------------- parsing
 
@@ -161,6 +188,10 @@ class FindingNormalizer:
         if not evidence:
             raise ValueError("finding has no usable evidence (FR-012 requires evidence)")
 
+        # A caller-assigned id takes precedence, but the sequence must step
+        # over it so the next allocation can never reissue the same id.
+        if raw.get("id"):
+            self.reserve_through(raw["id"])
         finding: dict[str, Any] = {
             "id": str(raw.get("id") or self.allocate_id()),
             "cwe": identifier,

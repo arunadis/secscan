@@ -80,6 +80,14 @@ def test_flows_artifact_and_coverage_exist(result):
         flows_doc["coverage"]["reconstructed"]
     )
 
+
+def test_finding_ids_are_unique_across_all_producers(result):
+    """One id space for the whole scan: flow findings share the driver-wide
+    normalizer, so no flow id can collide with a segment/dependency id
+    (duplicates would silently misbind triage verdicts)."""
+    ids = [f["id"] for f in result.findings]
+    assert len(ids) == len(set(ids))
+
 def test_code_level_scan_finds_nothing_for_the_gap(flow_repo: Path):
     result = run_mod.run_scan(flow_repo, responder=silent_responder, full=True)
     text = json.dumps(result.findings)

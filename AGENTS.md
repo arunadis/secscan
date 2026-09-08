@@ -32,6 +32,23 @@ Integration tests exercise the install matrix and full scan lifecycle end to end
 most behavioral changes are covered there. Test fixtures declare ground truth —
 including deliberate false positives that must NOT be reported.
 
+## Mutation testing (optional, not CI-gated)
+
+mutmut is in the `dev` extra, configured in `[tool.mutmut]` (source `src/`, selection
+`tests/unit` with `-x -q` — scoped to a single module the unit suite covers in
+seconds; the full suite is far too slow per mutant):
+
+```bash
+mutmut run "config.mode*"     # wildcard over dotted module/function mutant names
+mutmut run                    # resume the full campaign (incremental, cached)
+mutmut results                # per-mutant verdicts (🎉 killed / 🙁 survived)
+mutmut browse                 # TUI; write a survivor to disk with mutmut apply
+```
+
+Results live in the gitignored `mutants/` work dir. For a deep campaign, temporarily
+add `"tests/integration"` to `pytest_add_cli_args_test_selection` and, if those
+edits matter, delete `mutants/` to invalidate cached verdicts.
+
 ## Naming conventions (single source of truth)
 
 Everything is named **`secscan`** — do not reintroduce the old `security-scan` name:

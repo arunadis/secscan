@@ -22,6 +22,9 @@ venv/
 coverage.xml
 htmlcov/
 
+# Mutation testing work dir (mutmut)
+mutants/
+
 # secscan scan artifacts (when scanning this repo)
 .secscan/
 

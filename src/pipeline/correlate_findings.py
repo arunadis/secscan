@@ -193,6 +193,26 @@ def systemic_groups(findings: list[dict[str, Any]]) -> dict[str, list[str]]:
 # ---------------------------------------------------------------- finalization
 
 
+def _ensure_unique_ids(findings: list[dict[str, Any]]) -> None:
+    """Duplicate finding ids fail loudly here, never in triage.
+
+    Triage verdicts, the triage resume key, and dedupe's id ordering all key
+    on the raw id: a duplicated id would silently apply one finding's verdict
+    to another. Every producer is supposed to draw from one id space, so a
+    duplicate is a pipeline defect — name the ids and stop.
+    """
+    counts: dict[str, int] = {}
+    for finding in findings:
+        identifier = str(finding.get("id", ""))
+        counts[identifier] = counts.get(identifier, 0) + 1
+    duplicates = sorted(fid for fid, count in counts.items() if count > 1)
+    if duplicates:
+        raise ValueError(
+            "duplicate finding id(s) make triage verdict binding ambiguous: "
+            + ", ".join(duplicates)
+        )
+
+
 def finalize(
     findings: list[dict[str, Any]],
     graph: dict[str, Any],
@@ -224,6 +244,7 @@ def finalize(
     from pipeline import calibrate as calibrate_mod
     from pipeline.normalize_findings import resolve_and_dedupe
 
+    _ensure_unique_ids(findings)
     deduped, unresolved = resolve_and_dedupe(findings, graph, roots)
 
     # Applicability precedes correlation so a remap that creates a duplicate is

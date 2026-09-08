@@ -631,10 +631,14 @@ def run_scan(
     #
     # Routed through `ingest_findings` so de-duplication against external scanner
     # output has exactly one owner (FR-030c).
+    # Audit ids are allocated outside the shared normalizer, so the base must
+    # be the normalizer's true counter — not len(raw_findings) + 1, which
+    # undercounts whenever ids were pre-assigned or consumed by rejections.
+    dep_start_id = normalizer.next_id
     dependency_findings, audit_outcomes, audit_gaps = _run_stage(
         "dependency_audits",
         lambda: ingest_findings.run_dependency_audits(
-            store, roots, start_id=len(raw_findings) + 1
+            store, roots, start_id=dep_start_id
         ),
     )
     for gap in audit_gaps:
@@ -642,6 +646,11 @@ def run_scan(
     suppressions_payload = store.read_optional("tooling/suppressions.json", {"suppressions": []})
     suppressions = suppressions_payload.get("suppressions") or []
     raw_findings.extend(dependency_findings)
+    if dependency_findings:
+        # The audit sequence is contiguous from dep_start_id (native audits ->
+        # bundled baseline -> currency -> external merge); reserve its high-water
+        # mark so the flow round can never reissue one of these ids.
+        normalizer.reserve_through(dep_start_id + len(dependency_findings) - 1)
     if dependency_findings:
         store.write(
             "findings/dependencies.json",
@@ -682,6 +691,10 @@ def run_scan(
                 client=client,
                 usage=usage,
                 budget=budget,
+                # Share the scan-wide normalizer: a fresh one would restart at
+                # SEC-0001 and duplicate segment-analysis/audit ids, which
+                # silently collapse dedupe and misapply triage verdicts.
+                normalizer=normalizer,
                 max_level=active_profile.analysis_depth.max_escalation_level,
                 regime_obligations=applicability_resolution["obligations"],
                 regime_basis=(
@@ -743,11 +756,22 @@ def run_scan(
                 flows_doc,
                 schema="business_flow",
             )
-            store.mark_done(
-                business_flow.STAGE_ANALYSIS,
-                analysis_key,
-                [business_flow.ARTIFACT, business_flow.FINDINGS_ARTIFACT],
-            )
+            if flow_result.pending:
+                # A paused stage is not done: checkpointing it would make the
+                # reuse branch re-pend already-answered flows forever without
+                # consulting handoff responses (triage precedent, run-finding-
+                # triage's pending branch). The resume re-drives the round;
+                # answered flows resolve from response files / the answer cache.
+                store.mark_failed(
+                    business_flow.STAGE_ANALYSIS,
+                    f"{len(flow_result.pending)} flow request(s) pending",
+                )
+            else:
+                store.mark_done(
+                    business_flow.STAGE_ANALYSIS,
+                    analysis_key,
+                    [business_flow.ARTIFACT, business_flow.FINDINGS_ARTIFACT],
+                )
             reporter.stage_done(business_flow.STAGE_ANALYSIS)
             for fid in sorted(flow_result.pending):
                 pending.append(f"flow:{fid}")

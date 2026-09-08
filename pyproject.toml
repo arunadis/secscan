@@ -22,6 +22,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "mutmut>=3.7.0",
     "pytest>=8.3.4",
     "ruff>=0.9.0",
 ]
@@ -63,3 +64,12 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.mutmut]
+source_paths = ["src/"]
+# The unit suite is the default driver: the full suite (~20 min, subprocess-heavy
+# integration tests) is not viable per mutant. For a deep campaign, temporarily
+# extend the selection with "tests/integration" (and drop "-x" if you want full
+# failure detail rather than a fast kill).
+pytest_add_cli_args_test_selection = ["tests/unit"]
+pytest_add_cli_args = ["-x", "-q"]
