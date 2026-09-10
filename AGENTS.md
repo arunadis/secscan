@@ -39,11 +39,22 @@ mutmut is in the `dev` extra, configured in `[tool.mutmut]` (source `src/`, sele
 seconds; the full suite is far too slow per mutant):
 
 ```bash
-mutmut run "config.mode*"     # wildcard over dotted module/function mutant names
-mutmut run                    # resume the full campaign (incremental, cached)
+mutmut run --max-children 4 "config.mode*"  # scoped wildcard; cap concurrency explicitly
+mutmut run --max-children 4                 # resume the full campaign (incremental, cached)
 mutmut results                # per-mutant verdicts (🎉 killed / 🙁 survived)
 mutmut browse                 # TUI; write a survivor to disk with mutmut apply
 ```
+
+Memory safety: mutmut 3.x runs pytest in-process inside forked children, and
+`--max-children` defaults to `os.cpu_count()` — always pass it explicitly. A mutant
+can also allocate unboundedly (e.g. a mutated loop bound); tests/conftest.py enforces
+a per-child RAM cap under mutmut (`MUTMUT_MEM_CAP_GB`, default 4 GiB) via RLIMIT_AS
+where the kernel honors it (Linux) and a ru_maxrss watchdog thread elsewhere (macOS
+refuses to lower address-space limits), so a runaway child dies as a killed mutant
+instead of OOM-ing the machine. Short timeouts
+(`timeout_multiplier`/`timeout_constant` in `[tool.mutmut]`) bound CPU runaways;
+`use_setproctitle = true` makes a runaway child identifiable as `mutmut: <name>` in
+ps/top.
 
 Results live in the gitignored `mutants/` work dir. For a deep campaign, temporarily
 add `"tests/integration"` to `pytest_add_cli_args_test_selection` and, if those

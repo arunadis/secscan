@@ -73,3 +73,8 @@ source_paths = ["src/"]
 # failure detail rather than a fast kill).
 pytest_add_cli_args_test_selection = ["tests/unit"]
 pytest_add_cli_args = ["-x", "-q"]
+timeout_multiplier = 5.0
+timeout_constant = 5.0
+# Off by default on macOS; on: children show "mutmut: <mutant name>" in ps/top, so a
+# memory-runaway child is identifiable before the RAM cap (tests/conftest.py) kills it.
+use_setproctitle = true
