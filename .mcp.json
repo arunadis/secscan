@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "secscan": {
+      "args": [
+        "run",
+        "--project",
+        "${CLAUDE_PLUGIN_ROOT}",
+        "--extra",
+        "plugin",
+        "secscan",
+        "mcp"
+      ],
+      "command": "uv"
+    }
+  }
+}

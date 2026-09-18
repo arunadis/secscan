@@ -45,6 +45,10 @@ _PAYLOAD_DIRS: tuple[tuple[Path, str], ...] = (
 _PAYLOAD_FILES: tuple[tuple[Path, str], ...] = ((_SKILL_CORE / "cwe_map.json", "cwe_map.json"),)
 
 _EXCLUDE_NAMES = {"__pycache__", ".pytest_cache", ".DS_Store"}
+#: Plugin-only modules (feature 018): the MCP serving layer needs the ``[plugin]``
+#: extra and the installer package, neither of which a copied skill payload has.
+#: The handler module ``mcp_server.py`` *is* copied — delegation drives it.
+_EXCLUDE_FILES = {"mcp_app.py"}
 
 
 class InstallError(RuntimeError):
@@ -61,11 +65,15 @@ class InstallResult:
     previous_version: str | None = None
     config_schema_changed: bool = False
     notes: list[str] = field(default_factory=list)
+    #: Install form (feature 018): this module only ever produces the skill form;
+    #: the plugin form is `installer.plugin.register` and has its own result type.
+    form: str = "skill"
 
     def render(self) -> str:
         lines = [
             f"{self.action.capitalize()} {SKILL_NAME} v{TOOL_VERSION} for "
-            f"{ADAPTERS[self.agent].label}",
+            f"{ADAPTERS[self.agent].label}"
+            + (f" ({self.form} form)" if self.form != "skill" else ""),
             f"  skill:   {self.skill_dir}",
             f"  command: {self.invocation}",
         ]
@@ -183,7 +191,11 @@ def _write_payload(skill_dir: Path, adapter: Adapter, entrypoint: Path) -> list[
 
 
 def _excluded(path: Path) -> bool:
-    return any(part in _EXCLUDE_NAMES for part in path.parts) or path.suffix == ".pyc"
+    return (
+        any(part in _EXCLUDE_NAMES for part in path.parts)
+        or path.suffix == ".pyc"
+        or path.name in _EXCLUDE_FILES
+    )
 
 
 def _relative(path: Path, root: Path) -> str:

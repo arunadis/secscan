@@ -1,0 +1,22 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "secscan": {
+      "args": [
+        "run",
+        "--project",
+        "${PLUGIN_ROOT}",
+        "--extra",
+        "plugin",
+        "secscan",
+        "mcp"
+      ],
+      "command": "uv",
+      "cwd": "${PLUGIN_ROOT}",
+      "env": {
+        "UV_PROJECT_ENVIRONMENT": "${PLUGIN_DATA}/venv"
+      },
+      "type": "stdio"
+    }
+  }
+}

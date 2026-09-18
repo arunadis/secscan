@@ -17,7 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from installer.agents.base import Adapter, split_frontmatter
+from installer.agents.base import DRIVER_MARKER, Adapter, resolve_driver, split_frontmatter
 
 
 def _toml_escape_basic(value: str) -> str:
@@ -39,6 +39,13 @@ class GeminiAdapter(Adapter):
     #: Gemini keeps commands flat; the payload lives beside them.
     skills_subdir = (".gemini", "commands")
     invocation = "/{name}"
+    # Plugin form (feature 018): `gemini extensions install` delivers MCP servers and
+    # commands in one step; the settings file is the fallback when the CLI is absent.
+    plugin_layout = "gemini"
+    register_command = ("gemini", "extensions", "install", "{root}")
+    user_mcp_config = "~/.gemini/settings.json"
+    install_hint = "gemini extensions install {root}"
+    root_placeholder = "${extensionPath}"
 
     def skill_dir(self, project_root: Path, name: str) -> Path:
         # Payload directory (sibling of the flat command file).
@@ -48,6 +55,8 @@ class GeminiAdapter(Adapter):
         return self.skills_dir(project_root) / f"{name}.toml"
 
     def render_entrypoint(self, core_text: str, name: str) -> str:
+        if DRIVER_MARKER in core_text:
+            core_text = resolve_driver(core_text, self.driver)
         front, body = split_frontmatter(core_text)
         description = _toml_escape_basic(str(front.get("description", "")))
         prompt = body.replace("$ARGUMENTS", "{{args}}")

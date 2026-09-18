@@ -8,11 +8,15 @@ Exit codes apply to `secscan run` and the payload CLI:
 | Code | Meaning |
 |------|---------|
 | `0` | success |
-| `1` | error — including an analysis endpoint that kept refusing after all retries (one line on stderr, no traceback; segments already analysed are kept and the re-run resumes from the failed one) |
+| `1` | error — including an analysis endpoint that kept refusing after all retries (one line on stderr, no traceback; segments already analysed are kept and the re-run resumes from the failed one), and a scan root already locked by another running scan (`scan already running in <root> (pid N, started …, via cli\|plugin); wait or remove .secscan/run.lock if that process is gone`) |
 | `2` | not ready (environment/config prerequisites unmet) |
 | `3` | agent handoff pending — reasoning requests await answers in `.secscan/handoff/`; re-run to resume |
 | `4` | report published with quarantined narrative — a narrative section (system review, cross-system findings, attack paths, recommendations) referenced a finding id not admitted to the report and was omitted; the omission is declared in the report's *Report Integrity* section, and all findings still publish |
 | `130` | interrupted by the operator (Ctrl-C); checkpoints are intact, re-run to resume. Under the batch policy the line also says how many provider batches are still processing — the re-run polls them instead of resubmitting |
+
+The exit codes and the two-or-three-line stdout summary of `secscan run` are a frozen
+interface; the plugin form (`secscan mcp`) exposes the same outcomes as tool result
+states instead (see [Agent integration](agent-integration.md#two-install-forms)).
 
 ## `secscan init <dir>`
 
@@ -26,7 +30,9 @@ secscan init [PROJECT] [OPTIONS]
 | Option | Effect |
 |--------|--------|
 | `--ai <agent>` | Coding agent to install the skill into (`claude`, `copilot`, `cursor`, `windsurf`, `devin`, `agents`, `gemini`). Omit to generate config and check the environment without installing a skill. |
-| `--force` | Allow downgrading a newer installed version. |
+| `--plugin` | Register the **plugin form** instead of copying the skill: the MCP tool provider is added to the host's user-level settings (JSON merge, or the host CLI for Claude/Gemini) and a user-level install record is written. Nothing is written into PROJECT. Requires `--ai`; `--ai agents` has no plugin form. Runs `uv sync --extra plugin` in the checkout once so the host's first launch is offline. |
+| `--plugin-root <dir>` | The secscan checkout the plugin launches from (default: the one this command runs from). |
+| `--force` | Allow downgrading a newer installed version (skill or plugin form). |
 | `--commit-artifacts` | Do **not** gitignore `.secscan/` — scan artifacts will be committed. |
 | `--no-init` | Install the skill without generating configuration or running environment checks. |
 | `--install=<TOOLS>` | Install missing applicable external tools without prompting: `all`, or comma-separated ids (e.g. `--install=npm-audit,osv-scanner`). |
@@ -133,10 +139,32 @@ secscan report [OPTIONS]
 Reports are written to `.secscan/reports/`; the same data set renders to all three
 formats.
 
+## `secscan mcp`
+
+Serve the scan lifecycle as MCP tools over stdio — the plugin form's tool provider.
+No options: every tool takes the scan root as `workdir`. Requires the `plugin` extra
+(`uv sync --extra plugin` or `pip install "secscan[plugin]"`); without it the command
+prints a one-line install hint on stderr and exits 1. Tools: `secscan_init`,
+`secscan_run`, `secscan_status`, `secscan_list_requests`, `secscan_get_request`,
+`secscan_submit_answer`, `secscan_report`; prompt `secscan`; resources
+`secscan://prompts/<name>` and `secscan://schemas/<name>`. See
+[Agent integration](agent-integration.md#two-install-forms).
+
+## `secscan plugin render` / `secscan plugin check`
+
+Maintain the committed plugin files at the checkout root (`plugin.json`, `mcp.json`,
+`.claude-plugin/plugin.json`, `.mcp.json`, `gemini-extension.json`,
+`commands/secscan.toml`, `skills/secscan/SKILL.md`). `render` writes them from the
+single skill source and `TOOL_VERSION`; `check` exits 1 listing `stale: <path>` for
+any that differ. Both take `--root <dir>` (default: this checkout). `check` is part of
+the verification routine.
+
 ## `secscan status <dir>`
 
-Show installed skills (agent, pinned version, invocation), per-stage scan state,
-agent-handoff progress (`answered/pending`), and the latest report path.
+Show user-level plugin installs (host, version, where registered), installed skills
+(agent, pinned version, invocation), per-stage scan state, a `Running: pid N via
+<driver> since <time>` line when a scan holds the root's lock, agent-handoff
+progress (`answered/pending`), and the latest report path.
 
 ```
 secscan status [PROJECT]        # default: current directory
@@ -144,8 +172,10 @@ secscan status [PROJECT]        # default: current directory
 
 ## `secscan agents`
 
-List the supported coding agents and where each expects skills to live. Use any
-listed key as `--ai` for `init`.
+List the supported coding agents, where each expects skills to live, and the install
+forms available per host (`skill`, `plugin`, `plugin (MCP only)` for Windsurf). Use
+any listed key as `--ai` for `init`. Hosts without a listed plugin form can attach the
+tool provider from `mcp.json` to any MCP-capable agent.
 
 ## `secscan data`
 

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "secscan://contracts/018/result-envelope",
+  "type": "object",
+  "required": ["state", "tool_version", "driver"],
+  "properties": {
+    "state": {"enum": ["ok", "not_ready", "awaiting_reasoning", "in_progress", "locked",
+                       "report_defect", "endpoint_failed", "rejected", "error"]},
+    "tool_version": {"type": "string"},
+    "driver": {
+      "type": "object",
+      "required": ["form", "tool_version", "plugin_version", "delegated"],
+      "properties": {
+        "form": {"enum": ["plugin", "skill"]},
+        "tool_version": {"type": "string"},
+        "plugin_version": {"type": "string"},
+        "delegated": {"type": "boolean"},
+        "installs": {"type": "array"}
+      },
+      "additionalProperties": false
+    },
+    "message": {"type": "string"}
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "description": "Perform a hierarchical security assessment of a large codebase or multi-repository workspace while keeping LLM context bounded. Use when the user asks to scan for vulnerabilities, run a security review, audit a repository, triage scanner findings, or check a codebase for security issues.",
+  "mcpServers": {
+    "secscan": {
+      "args": [
+        "run",
+        "--project",
+        "${extensionPath}",
+        "--extra",
+        "plugin",
+        "secscan",
+        "mcp"
+      ],
+      "command": "uv",
+      "cwd": "${extensionPath}"
+    }
+  },
+  "name": "secscan",
+  "version": "0.1.0"
+}

@@ -32,6 +32,7 @@ __all__ = [
     "EventKind",
     "FileSink",
     "LiveSink",
+    "McpSink",
     "NullReporter",
     "OutputLevel",
     "PlainSink",
@@ -330,6 +331,54 @@ class LiveSink:
 
     def close(self) -> None:
         self.finalize()
+
+
+#: Event kinds an MCP host should see at ``warning`` level rather than ``info``.
+_MCP_WARNING_KINDS = frozenset(
+    {EventKind.WARNING, EventKind.STAGE_FAILED, EventKind.FAILED, EventKind.INTERRUPTED}
+)
+
+
+class McpSink:
+    """Forward rendered lines to an MCP host as log notifications (feature 018, FR-009).
+
+    ``notify(level, text)`` is supplied by the tool provider (it wraps the session's
+    ``notifications/message``); ``progress_callback(progress, total, message)`` maps
+    indexed ``i/N`` events onto ``notifications/progress`` when the client supplied a
+    progress token. Nothing here touches a stream: the plugin form has no terminal.
+    The rendered text is the same string the ``FileSink`` writes, so the existing
+    redaction sweep over ``scan.log`` covers everything the host receives.
+    """
+
+    def __init__(
+        self,
+        notify: Callable[[str, str], None],
+        *,
+        progress_callback: Callable[[float, float | None, str], None] | None = None,
+        verbose: bool = False,
+    ) -> None:
+        self.notify = notify
+        self.progress_callback = progress_callback
+        self.verbose = verbose
+
+    def write(self, event: ProgressEvent, rendered: str) -> None:
+        level = "warning" if event.kind in _MCP_WARNING_KINDS else "info"
+        try:
+            self.notify(level, rendered)
+        except Exception:  # noqa: BLE001 — a lost notification must never fail a scan
+            return
+        if self.progress_callback is not None and event.index is not None:
+            try:
+                self.progress_callback(float(event.index), float(event.total or 0) or None,
+                                       rendered)
+            except Exception:  # noqa: BLE001
+                return
+
+    def finalize(self) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
 
 
 class FileSink:
@@ -736,10 +785,21 @@ def build_reporter(
     width: int | None = None,
     heartbeat_interval_s: float = HEARTBEAT_INTERVAL_S,
     clock: Callable[[], float] | None = None,
+    mcp_notify: Callable[[str, str], None] | None = None,
+    mcp_progress: Callable[[float, float | None, str], None] | None = None,
 ) -> ProgressReporter:
-    """Assemble sinks for ``level``: terminal (unless quiet) plus the scan log."""
+    """Assemble sinks for ``level``: terminal (unless quiet) plus the scan log.
+
+    With ``mcp_notify`` (feature 018) the terminal sink is replaced by an
+    :class:`McpSink` — the plugin form never writes to stderr.
+    """
     sinks: list[Any] = []
-    if level is not OutputLevel.QUIET:
+    if mcp_notify is not None:
+        sinks.append(
+            McpSink(mcp_notify, progress_callback=mcp_progress,
+                    verbose=level is OutputLevel.VERBOSE)
+        )
+    elif level is not OutputLevel.QUIET:
         sinks.append(
             select_terminal_sink(
                 stream if stream is not None else sys.stderr,

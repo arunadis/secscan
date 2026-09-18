@@ -43,7 +43,7 @@ from pipeline.answers import AnswerStore
 from pipeline.batch_runner import BatchLedger, BatchRoundRunner
 from pipeline.budget import TokenBudget, estimate_tokens
 from pipeline.escalate import EscalationRunner
-from pipeline.llm_client import AgentHandoff, RetryPolicy, build_client
+from pipeline.llm_client import AgentHandoff, RetryPolicy, ScanPaused, build_client
 from pipeline.normalize_findings import (
     FindingNormalizer,
     MalformedAnalysisOutput,
@@ -51,8 +51,17 @@ from pipeline.normalize_findings import (
 from pipeline.progress import NullReporter
 from pipeline.providers import EndpointError
 from pipeline.redact import Redactor
-from pipeline.state import ANSWERS_DIR, ArtifactStore, hash_document, iter_source_files
+from pipeline.state import (
+    ANSWERS_DIR,
+    ArtifactStore,
+    acquire_run_lock,
+    hash_document,
+    iter_source_files,
+    release_run_lock,
+)
 from pipeline.usage import UsageTracker
+
+__all__ = ["ScanPaused", "ScanResult", "run_scan"]
 
 
 @dataclass
@@ -119,6 +128,8 @@ def run_scan(
     progress: Any | None = None,
     clock: Callable[[], float] | None = None,
     sleep: Callable[[float], None] | None = None,
+    deadline: float | None = None,
+    driver: str = "cli",
 ) -> ScanResult:
     """Execute the pipeline against ``scan_root``.
 
@@ -131,15 +142,74 @@ def run_scan(
     ``transport`` is a ``pipeline.providers.HttpTransport`` — the endpoint
     adapters' only I/O seam (feature 012); ``clock``/``sleep`` drive retry waits
     and batch polling so tests run without wall time.
+
+    ``deadline`` (feature 018, FR-007) is a timestamp in ``clock``'s domain. Once
+    passed, the driver raises :class:`ScanPaused` at the next boundary it already
+    persists behind; ``None`` (the CLI) never pauses. ``driver`` is recorded in the
+    run lock (FR-008) so a refusal can name who holds the root.
     """
     scan_root = Path(scan_root).resolve()
     store = ArtifactStore(scan_root)
     config = load(store.dir, environ=environ)
+    # Config is validated before the lock is taken: an unconfigured project must
+    # fail exactly as before, without leaving a lock behind.
+    acquire_run_lock(store.dir, driver=driver, scan_id=store.scan_id)
+    try:
+        return _run_scan(
+            scan_root, store, config,
+            responder=responder, transport=transport, profile=profile,
+            overrides=overrides, full=full, only_segment=only_segment,
+            environ=environ, progress=progress, clock=clock, sleep=sleep,
+            deadline=deadline,
+        )
+    finally:
+        release_run_lock(store.dir)
+
+
+def _run_scan(
+    scan_root: Path,
+    store: ArtifactStore,
+    config: Config,
+    *,
+    responder: Any | None,
+    transport: Any | None,
+    profile: str | None,
+    overrides: dict[str, Any] | None,
+    full: bool,
+    only_segment: str | None,
+    environ: dict[str, str] | None,
+    progress: Any | None,
+    clock: Callable[[], float] | None,
+    sleep: Callable[[float], None] | None,
+    deadline: float | None,
+) -> ScanResult:
     reporter = progress if progress is not None else NullReporter()
     clock = clock or time.monotonic
     sleep = sleep or time.sleep
 
     resolution = mode_mod.resolve(config, environ=environ)
+
+    #: Set once this call has completed a unit of *new* work: a checkpointed stage
+    #: actually run (not reused). A pause is only allowed after that, so every call
+    #: advances the scan by at least one checkpoint — otherwise a resume whose
+    #: pre-checkpoint work (file hashing, reused-stage checks) alone exceeds the
+    #: bound would pause at the same place forever. Deadline boundaries are exactly
+    #: the checkpointed stage starts and the batch-poll iterations (which the ledger
+    #: makes resumable); per-segment/flow/packet boundaries are NOT boundaries — the
+    #: analysis stages re-drive from their first unit on resume, so pausing between
+    #: units would persist nothing and never advance.
+    progressed = [False]
+
+    def _mark_progress(*_args: Any) -> None:
+        progressed[0] = True
+
+    def _check_deadline(stage: str, subject: str | None = None) -> None:
+        # Feature 018 (research R4): only ever called at a boundary the pipeline
+        # already persists behind. Saving state first lets `status` name it.
+        if deadline is not None and progressed[0] and clock() >= deadline:
+            store.save_state()
+            raise ScanPaused(stage, subject)
+
     active_profile = profiles_mod.resolve(
         profile, custom=config.custom_profiles, overrides=overrides
     )
@@ -158,7 +228,10 @@ def run_scan(
         return redactor.redact(str(exc)).text
 
     reporter.scan_started(store.scan_id, profile=active_profile.name, mode=resolution.mode_label)
-    stage_kwargs = {"reporter": reporter, "fail_text": _fail_text}
+    stage_kwargs = {
+        "reporter": reporter, "fail_text": _fail_text,
+        "before": _check_deadline, "after": _mark_progress,
+    }
 
     # A deeper profile than the last run must re-analyze (FR-028 edge case).
     previous_depth = store.get_meta("profile_depth_key")
@@ -322,6 +395,7 @@ def run_scan(
     #: exactly what the driver saw.
     per_segment: dict[str, list[dict[str, Any]]] = {s["id"]: [] for s in segments}
     pending: list[str] = []
+    _check_deadline("segment_analysis")
     store.mark_running("segment_analysis")
     reporter.stage_started("segment_analysis")
     total_segments = len(segments)
@@ -383,6 +457,7 @@ def run_scan(
             sleep=sleep,
             offpeak_window=resolution.offpeak_window,
         )
+        batch_runner.deadline = deadline
         try:
             outcomes = batch_runner.run(
                 segments,
@@ -484,7 +559,9 @@ def run_scan(
 
     def _run_stage(name: str, fn: Any) -> Any:
         # Deterministic passes are not individually checkpointed; announce them
-        # so the operator sees the same stage list on every run (FR-001).
+        # so the operator sees the same stage list on every run (FR-001). They are
+        # also not deadline boundaries (feature 018): a pause between two passes
+        # that re-run on every call would persist nothing and never advance.
         reporter.stage_started(name)
         try:
             result = fn()
@@ -684,6 +761,7 @@ def run_scan(
                 pending.append(f"flow:{flow_id}")
             reporter.stage_reused(business_flow.STAGE_ANALYSIS, analysis_key)
         else:
+            _check_deadline(business_flow.STAGE_ANALYSIS)
             store.mark_running(business_flow.STAGE_ANALYSIS)
             reporter.stage_started(business_flow.STAGE_ANALYSIS)
             applicability_resolution = business_flow.resolve_applicability(config, flows_doc)
@@ -717,6 +795,7 @@ def run_scan(
                 reporter.segment_done(
                     business_flow.STAGE_ANALYSIS, flow["id"], index + 1, total_flows
                 )
+
             raw_findings.extend(flow_result.findings)
             # Coverage is the honest-uncertainty ledger (FR-010): answered flows,
             # pending flows, and undetermined assessments are all declared.
@@ -772,6 +851,7 @@ def run_scan(
                     analysis_key,
                     [business_flow.ARTIFACT, business_flow.FINDINGS_ARTIFACT],
                 )
+                _mark_progress()
             reporter.stage_done(business_flow.STAGE_ANALYSIS)
             for fid in sorted(flow_result.pending):
                 pending.append(f"flow:{fid}")
@@ -786,6 +866,7 @@ def run_scan(
         raise handoff
 
     store.mark_done("segment_analysis", hash_document(file_hashes))
+    _mark_progress()
 
     # --------------------------------- stage 7-9: normalize, verify, correlate
     # Shared with `python -m pipeline.correlate_findings` so the driver and the
@@ -859,8 +940,10 @@ def run_scan(
             if missing > 0:
                 warnings.append(_triage_gap_note(missing, triage_summary["candidates"]))
         else:
+            _check_deadline("finding_triage")
             correlated, triage_suppressions, triage_note, triage_summary = _run_finding_triage(
                 store=store,
+                deadline=deadline,
                 correlated=correlated,
                 declarations=declarations,
                 config=config,
@@ -1028,6 +1111,7 @@ def _run_finding_triage(
     resume_key: str,
     clock: Callable[[], float] | None,
     sleep: Callable[[float], None] | None,
+    deadline: float | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None, dict[str, Any]]:
     """Run the triage round.
 
@@ -1080,6 +1164,7 @@ def _run_finding_triage(
                 window_hours=resolution.batch_window_hours,
                 clock=clock,
                 sleep=sleep,
+                deadline=deadline,
             )
         else:
             for index, packet in enumerate(packets, start=1):
@@ -1098,6 +1183,7 @@ def _run_finding_triage(
                     escalation_level=1,
                     estimated_tokens=packet.get("estimated_tokens", 0),
                 )
+
 
         if pending:
             store.save_state()
@@ -1185,7 +1271,7 @@ def _run_finding_triage(
             note = _triage_gap_note(len(not_adjudicated), len(candidates))
             reporter.warning(note, stage="finding_triage")
         return kept, triage_suppressions, note, summary
-    except AgentHandoff:
+    except (AgentHandoff, ScanPaused):
         raise
     except Exception as exc:
         store.mark_failed("finding_triage", str(exc))
@@ -1207,9 +1293,17 @@ def _stage(
     run: Any,
     reporter: Any = None,
     fail_text: Any = str,
+    before: Callable[[str], None] | None = None,
+    after: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
-    """Run a single-artifact stage, honouring the resume checkpoint."""
+    """Run a single-artifact stage, honouring the resume checkpoint.
+
+    ``before`` is the feature-018 deadline check: invoked at the stage boundary,
+    before either the reuse or the run branch, so a pause never lands mid-stage.
+    """
     reporter = reporter if reporter is not None else NullReporter()
+    if before is not None:
+        before(name)
     if store.should_skip(name, resume_key) and store.exists(artifact):
         reporter.stage_reused(name, resume_key)
         return store.read(artifact)
@@ -1223,6 +1317,8 @@ def _stage(
         raise
     store.mark_done(name, resume_key, [artifact])
     reporter.stage_done(name)
+    if after is not None:
+        after(name)
     return document
 
 
@@ -1235,8 +1331,12 @@ def _stage_list(
     run: Any,
     reporter: Any = None,
     fail_text: Any = str,
+    before: Callable[[str], None] | None = None,
+    after: Callable[[str], None] | None = None,
 ) -> list[dict[str, Any]]:
     reporter = reporter if reporter is not None else NullReporter()
+    if before is not None:
+        before(name)
     if store.should_skip(name, resume_key):
         existing = store.glob(pattern)
         if existing:
@@ -1252,6 +1352,8 @@ def _stage_list(
         raise
     store.mark_done(name, resume_key)
     reporter.stage_done(name)
+    if after is not None:
+        after(name)
     return documents
 
 

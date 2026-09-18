@@ -14,6 +14,40 @@ from typing import Any
 import yaml
 
 FRONTMATTER_DELIMITER = "---"
+#: Feature 018: the one paragraph that differs between install forms — how the
+#: pipeline is invoked — is an include in the core body, resolved per form.
+DRIVER_MARKER = "<!-- driver -->"
+DRIVERS = ("shell", "tools")
+_SKILL_CORE = Path(__file__).resolve().parent.parent.parent / "skill_core"
+
+
+def skill_source_text() -> str:
+    return (_SKILL_CORE / "SKILL.md").read_text()
+
+
+def driver_text(driver: str) -> str:
+    if driver not in DRIVERS:
+        raise ValueError(f"unknown skill driver {driver!r}; expected one of {DRIVERS}")
+    return (_SKILL_CORE / "drivers" / f"{driver}.md").read_text()
+
+
+def resolve_driver(core_text: str, driver: str) -> str:
+    """Replace the driver marker with the named driver text (exactly once)."""
+    if core_text.count(DRIVER_MARKER) != 1:
+        raise ValueError("SKILL.md must contain exactly one driver marker")
+    return core_text.replace(DRIVER_MARKER, driver_text(driver).rstrip("\n"))
+
+
+def render_skill(driver: str, core_text: str | None = None) -> str:
+    """The core skill document with the given driver resolved (frontmatter intact)."""
+    return resolve_driver(core_text if core_text is not None else skill_source_text(), driver)
+
+
+def strip_driver(text: str) -> str:
+    """The body with whichever driver text it carries removed — for parity tests."""
+    for driver in DRIVERS:
+        text = text.replace(driver_text(driver).rstrip("\n"), DRIVER_MARKER)
+    return text
 
 
 def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
@@ -65,8 +99,40 @@ class Adapter:
 
     # -------------------------------------------------------------- render
 
+    #: Which driver the skill form renders (feature 018): the shell driver, so a
+    #: per-project install keeps instructing the shell commands it always did.
+    driver: str = "shell"
+
+    # ------------------------------------------------- plugin form (feature 018)
+    #: Which committed plugin layout this host loads: ``agent-plugins`` (root
+    #: plugin.json + mcp.json), ``claude`` (.claude-plugin/ + .mcp.json), ``gemini``
+    #: (gemini-extension.json), ``mcp-only`` (no plugin format; MCP registration
+    #: only) or ``none`` (no plugin form).
+    plugin_layout: str = "none"
+    #: User-level MCP configuration file the installer merges ``mcpServers.secscan``
+    #: into (``~`` expands to the user's home). ``None`` when the host's file is
+    #: host-owned and a CLI must be used instead.
+    user_mcp_config: str | None = None
+    #: Host CLI invocation that registers the tool provider at user level.
+    #: ``{json}`` is replaced with the stdio server entry, ``{root}`` with the plugin
+    #: root. ``None`` when the JSON merge is the mechanism.
+    register_command: tuple[str, ...] | None = None
+    #: Command the engineer runs to load the *full* plugin (skill + tools) from the
+    #: checkout; printed after registration.
+    install_hint: str | None = None
+    #: Placeholder the host expands to the plugin root in committed MCP entries.
+    root_placeholder: str = "${PLUGIN_ROOT}"
+
+    @property
+    def install_forms(self) -> tuple[str, ...]:
+        if self.plugin_layout == "none":
+            return ("skill",)
+        return ("skill", "plugin")
+
     def render_entrypoint(self, core_text: str, name: str) -> str:
         """Transform the core skill document for this agent."""
+        if DRIVER_MARKER in core_text:
+            core_text = resolve_driver(core_text, self.driver)
         front, body = split_frontmatter(core_text)
         front["name"] = name
         merged = {**front, **self.extra_frontmatter}

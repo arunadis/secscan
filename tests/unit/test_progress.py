@@ -523,3 +523,60 @@ def test_build_reporter_default_and_verbose_write_to_stream(tmp_path: Path) -> N
         r.scan_started("s", profile="full", mode="m")
         r.close()
         assert "start scan s" in stream.getvalue()
+
+
+# ------------------------------------------------------ feature 018: McpSink
+
+
+def _mk_event(kind: EventKind, **kw) -> progress.ProgressEvent:
+    base = dict(stage="segment_analysis", subject=None, index=None, total=None,
+                elapsed_s=None, message="", detail={}, at=0.0, since_start_s=0.0)
+    base.update(kw)
+    return progress.ProgressEvent(kind=kind, **base)
+
+
+def test_mcp_sink_forwards_rendered_lines_with_levels() -> None:
+    seen: list[tuple[str, str]] = []
+    sink = progress.McpSink(lambda level, text: seen.append((level, text)))
+    sink.write(_mk_event(EventKind.STAGE_STARTED), "start segment_analysis")
+    sink.write(_mk_event(EventKind.WARNING, message="gap"), "warn  gap")
+    sink.write(_mk_event(EventKind.STAGE_FAILED, message="x"), "fail  x")
+    assert seen == [
+        ("info", "start segment_analysis"),
+        ("warning", "warn  gap"),
+        ("warning", "fail  x"),
+    ]
+    sink.finalize()
+    sink.close()
+
+
+def test_mcp_sink_reports_progress_only_for_indexed_events() -> None:
+    progressed: list[tuple[float, float | None, str]] = []
+    sink = progress.McpSink(
+        lambda level, text: None,
+        progress_callback=lambda p, t, m: progressed.append((p, t, m)),
+    )
+    sink.write(_mk_event(EventKind.STAGE_STARTED), "start x")
+    sink.write(_mk_event(EventKind.SEGMENT_DONE, subject="s1", index=2, total=5), "done  s1 2/5")
+    assert progressed == [(2, 5, "done  s1 2/5")]
+
+
+def test_mcp_sink_never_writes_to_a_stream(capsys) -> None:
+    sink = progress.McpSink(lambda level, text: None)
+    sink.write(_mk_event(EventKind.STAGE_STARTED), "start x")
+    out, err = capsys.readouterr()
+    assert out == "" and err == ""
+
+
+def test_build_reporter_with_mcp_notify_has_no_terminal_sink(tmp_path: Path) -> None:
+    seen: list[str] = []
+    reporter = build_reporter(
+        OutputLevel.DEFAULT, mcp_notify=lambda level, text: seen.append(text),
+        log_path=tmp_path / "scan.log", stream=io.StringIO(),
+    )
+    kinds = [type(s).__name__ for s in reporter.sinks]
+    assert kinds == ["McpSink", "FileSink"]
+    reporter.stage_started("discover_repo")
+    reporter.close()
+    assert seen and "discover_repo" in seen[-1]
+    assert "discover_repo" in (tmp_path / "scan.log").read_text()

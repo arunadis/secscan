@@ -13,6 +13,10 @@ class CursorAdapter(Adapter):
     label = "Cursor"
     skills_subdir = (".cursor", "skills")
     invocation = "/{name}"
+    # Plugin form (feature 018): Cursor loads the Agent Plugins 1.0.0 root manifest.
+    plugin_layout = "agent-plugins"
+    user_mcp_config = "~/.cursor/mcp.json"
+    install_hint = "Cursor: Settings > Plugins > install from path {root}"
     # Cursor honours model auto-invocation; scanning is expensive, so require an
     # explicit request from the user.
     extra_frontmatter = {"disable-model-invocation": True}

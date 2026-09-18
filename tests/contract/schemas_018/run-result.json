@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "secscan://contracts/018/run-result",
+  "allOf": [{"$ref": "secscan://contracts/018/result-envelope"}],
+  "properties": {
+    "scan_id": {"type": "string"},
+    "report_path": {"type": "string"},
+    "findings_reported": {"type": "integer", "minimum": 0},
+    "coverage_notes": {"type": "integer", "minimum": 0},
+    "quarantined_sections": {"type": "integer", "minimum": 0},
+    "summary": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 3},
+    "pending": {"type": "array", "items": {"type": "string"}},
+    "requests_dir": {"type": "string"},
+    "checkpoint": {"type": "object", "required": ["stage"],
+                   "properties": {"stage": {"type": "string"},
+                                  "subject": {"type": ["string", "null"]}}},
+    "elapsed_s": {"type": "number"},
+    "overran_bound": {"type": "boolean"},
+    "bound_s": {"type": "integer"},
+    "bound": {"type": "string"},
+    "lock": {"type": "object"},
+    "resume": {"type": "boolean"},
+    "reason": {"type": "string"},
+    "repair": {"type": "string"},
+    "next": {"type": "string"}
+  }
+}

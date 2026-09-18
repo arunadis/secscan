@@ -20,7 +20,9 @@ post-correlation finding-triage round is built per feature 013, and report
 accuracy hardening (dependency usage evidence, template-control credit,
 currency merge, dangling-reference quarantine) is built per feature 014, and
 opt-in business-flow (functional) analysis with regulatory-obligation evaluation
-is built per feature 015 — see
+is built per feature 015, and the **plugin form** — an MCP tool provider plus an
+installable Agent Plugins / Claude Code / Gemini CLI package at the repository root,
+alongside the unchanged per-project skill install — is built per feature 018 — see
 [Roadmap](#roadmap). Multi-repo workspaces scan end to end today: cross-repo
 graph edges, cross-member applicability, and a workspace-wide cross-boundary
 review are built and tested; the still-open cross-repo items are
@@ -53,8 +55,16 @@ Requires Python 3.11+.
 uv tool install .                    # or: pipx install .
 
 # scaffold the skill into your agent, generate config, check the environment
-secscan agents                       # see what's supported
+secscan agents                       # see what's supported, and which install forms
 secscan init /path/to/your/project --ai claude
+
+# ...or install secscan as a PLUGIN once, for every project (nothing copied into
+# the project): register the MCP tool provider at user level and/or load the
+# checkout as a plugin with your host's own command
+secscan init /path/to/your/project --ai cursor --plugin
+devin plugins install --local .      # Devin   (Agent Plugins / Claude layout)
+gemini extensions install .          # Gemini CLI
+claude --plugin-dir .                # Claude Code
 
 # scan
 cd /path/to/your/project
@@ -85,6 +95,14 @@ pricing), with off-peak scheduling and per-level model tiers available on top.
 Each gets a thin adapter over one agent-agnostic core skill; Gemini's flat TOML
 command format is translated automatically. Adding an agent means adding an
 adapter — the core never changes.
+
+Two **install forms**: the per-project *skill* (default, unchanged) and the
+user-level *plugin* — the repository root is an [Agent Plugins 1.0.0](https://agent-plugins.org)
+package (Cursor, Copilot, Devin) with Claude Code and Gemini CLI layouts alongside,
+driven through MCP tools (`secscan_run`, `secscan_submit_answer`, …) instead of shell
+commands. Windsurf gets the tools only (no plugin skill format). When a project already
+carries a skill install, the plugin delegates to that pinned version. See
+[Agent integration](docs/agent-integration.md#two-install-forms).
 
 ## Documentation
 
@@ -345,15 +363,20 @@ One command, **`secscan`**, covers both setup and scanning:
 | Command | Purpose |
 |---------|---------|
 | `secscan init <dir> [--ai <agent>]` | Scaffold the skill into an agent and/or generate config + check the environment; re-run to upgrade in place |
-| `secscan agents` | List supported agents and their skill paths |
-| `secscan status <dir>` | Installed skills, stage state, handoff progress, latest report |
+| `secscan init <dir> --ai <agent> --plugin` | Register the plugin form in the host's user-level settings — nothing written into the project |
+| `secscan mcp` | Serve the scan lifecycle as MCP tools over stdio (plugin form; needs `secscan[plugin]`) |
+| `secscan plugin render\|check` | Regenerate / verify the committed plugin files at the checkout root |
+| `secscan agents` | List supported agents, their skill paths and install forms |
+| `secscan status <dir>` | Plugin installs, installed skills, stage state, running lock, handoff progress, latest report |
 | `secscan run [--profile] [--policy] [--set k=v] [--segment id] [--full] [--output quiet\|default\|verbose]` | Run a scan; progress on stderr, summary on stdout |
 | `secscan report [--repo name] [--format markdown\|json\|html]` | Re-render from artifacts |
 | `secscan data [--refresh-eol]` | Knowledge-base versions and dataset staleness |
 | `secscan version` | Tool and schema versions |
 
-Exit codes: `0` ok · `1` error · `2` not ready · `3` agent handoff pending ·
-`4` report published with quarantined narrative section(s) · `130` interrupted.
+Exit codes: `0` ok · `1` error (incl. "scan already running" for a locked root) ·
+`2` not ready · `3` agent handoff pending · `4` report published with quarantined
+narrative section(s) · `130` interrupted. Unchanged by the plugin form, which exposes
+the same outcomes as tool result states.
 
 A running scan prints each stage, segment (`i/N`), external tool and coverage note
 to stderr as it happens, with a heartbeat during long steps; `-q` silences it, `-v`
@@ -416,7 +439,8 @@ These are enforced by tests, not just intent:
 ├── reports/<scan-id>.{md,json,html}   one data set, three renderings
 ├── state.json                  checkpoints, file hashes
 ├── usage.json                  tokens per stage/tier, savings vs baseline
-└── scan.log                    progress trace of the latest run (diagnostic, not an artifact)
+├── scan.log                    progress trace of the latest run (diagnostic, not an artifact)
+└── run.lock                    only while a scan runs (exclusive lock, not an artifact)
 ```
 
 Gitignored by default; install with `--commit-artifacts` to share scan history.
@@ -442,6 +466,14 @@ Built and tested:
 - ✅ Verification + reproduction blocks, correlation/dedup, unified report
 - ✅ Installer, 7 agent adapters, init/environment checks, in-place upgrade
 - ✅ Agent handoff with cross-session resume
+- ✅ Plugin form (feature 018): MCP tool provider (`secscan mcp`) exposing the
+  lifecycle as `secscan_*` tools with a closed state vocabulary, bounded `run`
+  calls that pause only at checkpoints and always make progress, a shared run lock,
+  answer validation before any write; the repository root as an Agent Plugins
+  1.0.0 package plus Claude Code and Gemini CLI layouts, all generated from the
+  single skill source and drift-checked; `init --plugin` user-level registration
+  per host with nothing written into the project; project skill install takes
+  precedence via delegation
 
 Accuracy hardening (feature 002 — built and tested):
 

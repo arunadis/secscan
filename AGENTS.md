@@ -13,7 +13,7 @@ See `README.md` for the full picture.
 
 ```bash
 uv venv --python 3.11
-uv pip install -e ".[dev]"        # editable install into ./.venv
+uv pip install -e ".[dev,plugin]" # editable install into ./.venv ([plugin] = MCP SDK)
 source .venv/bin/activate         # ...or prefix commands with `uv run`
 ```
 
@@ -23,9 +23,10 @@ Note: `uv pip install -e .` does NOT put `secscan` on your PATH — use the venv
 ## Verification (run before finishing any change)
 
 ```bash
-pytest -q                         # full suite (~800 tests); must be green
+pytest -q                         # full suite (~900 tests); must be green
 pytest -q -m slow                 # + large-repository scale scan
 ruff check src tests              # line-length 100, py311, rules E/F/I/UP/B
+secscan plugin check              # committed plugin files match their render (feature 018)
 ```
 
 Integration tests exercise the install matrix and full scan lifecycle end to end, so
@@ -71,6 +72,10 @@ Everything is named **`secscan`** — do not reintroduce the old `security-scan`
 | Console script | `secscan` (unified: installer + scan engine) | `[project.scripts]` in `pyproject.toml` |
 | Env override prefix | `SECSCAN_<SECTION>_<KEY>` | `ENV_PREFIX` in `src/config/loader.py` |
 | Payload-internal CLI | `python -m pipeline.scan_cli` | `src/pipeline/scan_cli.py` |
+| MCP tool provider (plugin form) | `secscan mcp`; tools `secscan_<op>`; prompt `secscan`; resources `secscan://…` | `src/pipeline/mcp_server.py` (handlers), `src/pipeline/mcp_app.py` (serving) |
+| Plugin package (repo root) | `plugin.json` + `mcp.json` (Agent Plugins 1.0.0), `.claude-plugin/` + `.mcp.json`, `gemini-extension.json` + `commands/`, `skills/secscan/SKILL.md` — all **generated** by `secscan plugin render` | `src/installer/plugin.py` |
+| Optional extra | `secscan[plugin]` (`mcp>=2.1,<3`) — never required by the skill form | `[project.optional-dependencies]` |
+| Run lock | `.secscan/run.lock` (not an artifact) | `RUN_LOCK_NAME` in `src/pipeline/state.py` |
 
 Historical `specs/00X-*` documents still reference the old names — they are point-in-time
 records; do NOT "fix" them.
@@ -82,7 +87,9 @@ src/
 ├── installer/     secscan CLI (click group, unified command surface), per-agent
 │                  adapters (claude/copilot/cursor/windsurf/devin/agents/gemini),
 │                  in-place upgrade
-├── skill_core/    installable payload: SKILL.md, prompts/, schemas/, data/, cwe_map.json
+├── skill_core/    installable payload: SKILL.md (core body with a `<!-- driver -->`
+│                  marker), drivers/{shell,tools}.md (how the pipeline is invoked in the
+│                  skill vs plugin form), prompts/, schemas/, data/, cwe_map.json
 ├── pipeline/      deterministic scan stages + payload CLI; tooling/ drives external
 │                  scanners (provision, run, cross-check); triage* modules run the
 │                  post-correlation finding-triage round (packets, verdict gates,
@@ -112,7 +119,21 @@ specs/             spec-first history (001–009), per-feature spec/plan/contrac
   suppress a finding or read as clean.
 - **Budgets enforced against the serialized request**, never estimates.
 - **Agent handoff**: exit code 3 means reasoning files await answers in
-  `.secscan/handoff/`; the scan resumes when re-run. Exit code 4 means the report
+  `.secscan/handoff/`; the scan resumes when re-run. The plugin form exposes the same
+  handoff as tool states (`awaiting_reasoning`, `in_progress`, `locked`, …) and
+  `secscan_submit_answer` writes exactly the response file an agent would.
+- **Plugin form is additive**: `secscan init --ai <host> --plugin` registers the MCP
+  tool provider at *user level* and writes nothing into the project; without
+  `--plugin` the installer is byte-identical to before. When a project carries a
+  skill install, the plugin delegates to that pinned payload (detected by the presence
+  of `scripts/pipeline/mcp_server.py`, never by `TOOL_VERSION`) and never runs its own
+  engine against it. `mcp_server.py` must not import `installer` or `mcp` (it is copied
+  into the payload); the serving layer `mcp_app.py` is excluded from the payload.
+- **Bounded `run` pauses only at checkpoints**: `run_scan(deadline=…)` raises
+  `ScanPaused` before a checkpointed stage or at a batch-poll iteration, never between
+  segments or deterministic passes (those re-drive on resume — pausing there livelocks),
+  and only after the call completed one non-reused stage (guaranteed progress). The CLI
+  never sets a deadline. Exit code 4 means the report
   published with narrative section(s) quarantined for a dangling finding
   reference — declared in the report's Report Integrity section, never stdout.
 - **Progress is a side channel**: `src/pipeline/progress.py` is the only module that
