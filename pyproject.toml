@@ -26,6 +26,11 @@ dev = [
     "pytest>=8.3.4",
     "ruff>=0.9.0",
 ]
+# Plugin form only (feature 018): the MCP tool provider. The skill form and the
+# copied payload never import it, so the base install stays dependency-free.
+plugin = [
+    "mcp>=2.1,<3",
+]
 
 [project.scripts]
 # Unified command surface: skill installer + scan engine.
@@ -41,6 +46,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 skill_core = [
     "SKILL.md",
+    "drivers/*.md",
     "prompts/*.md",
     "schemas/*.json",
     "cwe_map.json",
@@ -75,6 +81,7 @@ pytest_add_cli_args_test_selection = ["tests/unit"]
 pytest_add_cli_args = ["-x", "-q"]
 timeout_multiplier = 5.0
 timeout_constant = 5.0
-# Off by default on macOS; on: children show "mutmut: <mutant name>" in ps/top, so a
-# memory-runaway child is identifiable before the RAM cap (tests/conftest.py) kills it.
-use_setproctitle = true
+# Off on macOS (upstream default): setproctitle is not fork-safe on macOS — children
+# die in CoreFoundation and mutmut miscounts them as "segfault" verdicts. The ps/top
+# identifiability trade-off (AGENTS.md) does not survive contact with that crash.
+use_setproctitle = false

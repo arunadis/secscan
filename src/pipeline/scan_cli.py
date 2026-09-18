@@ -232,7 +232,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     from pipeline.llm_client import AgentHandoff
     from pipeline.providers import EndpointError
     from pipeline.redact import Redactor
-    from pipeline.state import LOG_FILE_NAME, SCAN_DIR_NAME
+    from pipeline.state import LOG_FILE_NAME, SCAN_DIR_NAME, ScanLocked
 
     overrides = _parse_set(args.overrides)
     environ_overrides = None
@@ -260,6 +260,16 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return EXIT_ERROR
 
+    # Feature 018 (FR-008): refuse before opening the scan log, which the running
+    # scan owns — the lock acquisition inside run_scan remains the authoritative,
+    # race-free check.
+    from pipeline.state import RUN_LOCK_NAME, read_run_lock
+
+    live = read_run_lock(store_dir)
+    if live is not None:
+        print(str(ScanLocked(live, store_dir / RUN_LOCK_NAME)), file=sys.stderr)
+        return EXIT_ERROR
+
     redactor = Redactor(config.redaction_patterns, **run_mod._entropy_kwargs(config))
     reporter = progress.build_reporter(
         progress.OutputLevel.from_str(config.output_level),
@@ -278,6 +288,13 @@ def cmd_run(args: argparse.Namespace) -> int:
         )
     except (ConfigNotFound, ConfigError) as exc:
         reporter.failed(str(exc).splitlines()[0])
+        reporter.close()
+        print(str(exc), file=sys.stderr)
+        return EXIT_ERROR
+    except ScanLocked as exc:
+        # Feature 018 (FR-008): another scan holds this root. Refuse without
+        # touching its state; stdout stays empty so the summary contract holds.
+        reporter.failed(str(exc))
         reporter.close()
         print(str(exc), file=sys.stderr)
         return EXIT_ERROR
@@ -322,14 +339,27 @@ def cmd_run(args: argparse.Namespace) -> int:
         raise
     reporter.close()
 
-    print(f"scan {result.scan_id}: {len(result.reported_findings)} finding(s) reported")
-    print(f"report: {result.report_path}")
-    if result.warnings:
-        print(f"({len(result.warnings)} coverage note(s) recorded in the report)")
-    report_payload = result.report if isinstance(result.report, dict) else {}
-    if report_payload.get("quarantined_sections"):
+    for line in summary_lines(result):
+        print(line)
+    if quarantined_sections(result):
         return EXIT_REPORT_DEFECT
     return EXIT_OK
+
+
+def summary_lines(result: Any) -> list[str]:
+    """The frozen stdout summary (two or three lines) — shared with the plugin form."""
+    lines = [
+        f"scan {result.scan_id}: {len(result.reported_findings)} finding(s) reported",
+        f"report: {result.report_path}",
+    ]
+    if result.warnings:
+        lines.append(f"({len(result.warnings)} coverage note(s) recorded in the report)")
+    return lines
+
+
+def quarantined_sections(result: Any) -> int:
+    report_payload = result.report if isinstance(result.report, dict) else {}
+    return len(report_payload.get("quarantined_sections") or [])
 
 
 def _open_batches(store_dir: Path) -> int:
@@ -344,7 +374,7 @@ def _open_batches(store_dir: Path) -> int:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
-    from pipeline.state import SCAN_DIR_NAME, ArtifactStore
+    from pipeline.state import SCAN_DIR_NAME, ArtifactStore, read_run_lock
 
     root = Path(args.workdir).resolve()
     scan_dir = root / SCAN_DIR_NAME
@@ -356,6 +386,12 @@ def cmd_status(args: argparse.Namespace) -> int:
     store = ArtifactStore(root)
     print(f"Scan root: {root}")
     print(f"Scan id:   {store.scan_id}")
+    live = read_run_lock(scan_dir)
+    if live is not None:
+        import time as _time
+
+        started = _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime(float(live["started_at"])))
+        print(f"Running:   pid {live['pid']} via {live.get('driver', 'unknown')} since {started}")
     print("")
     print("Stages:")
     for stage, state in store.stage_summary().items():

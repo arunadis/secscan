@@ -141,6 +141,27 @@ class AgentHandoff(Exception):
         return "\n".join(lines)
 
 
+class ScanPaused(Exception):
+    """Raised when the driver reaches its cooperative deadline (feature 018, FR-007).
+
+    Only raised at a boundary the pipeline already persists behind (a stage
+    checkpoint, a persisted segment/flow/packet, a batch-poll iteration), so the
+    next ``run_scan`` resumes from exactly this point. ``stage``/``subject`` name
+    the unit that would have run next. The CLI never sets a deadline and can never
+    see this exception; the plugin tool provider maps it to ``in_progress``.
+    """
+
+    def __init__(self, stage: str, subject: str | None = None, *, reason: str = "deadline") -> None:
+        self.stage = stage
+        self.subject = subject
+        self.reason = reason
+        where = f"{stage}/{subject}" if subject else stage
+        super().__init__(f"scan paused before {where} ({reason}); re-run to continue")
+
+    def checkpoint(self) -> dict[str, Any]:
+        return {"stage": self.stage, "subject": self.subject}
+
+
 @dataclass
 class AgentMediatedClient:
     """Externalises reasoning to the host agent (default mode, FR-027).

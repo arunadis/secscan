@@ -1,6 +1,9 @@
 """`secscan` command-line interface — the unified command surface.
 
     secscan init <dir> [--ai <agent>] install the skill and/or generate config
+    secscan init <dir> --ai <agent> --plugin   register the plugin form (user level)
+    secscan mcp                       serve the scan lifecycle as MCP tools (stdio)
+    secscan plugin render|check       regenerate / verify the committed plugin files
     secscan run                       run a scan (resumes automatically)
     secscan status <dir>              show what is installed / configured
     secscan report                    re-render the latest report
@@ -18,7 +21,7 @@ from pathlib import Path
 import click
 
 from installer import core
-from installer.agents import describe, supported
+from installer.agents import supported
 from pipeline.state import SCAN_DIR_NAME, TOOL_VERSION
 
 
@@ -43,6 +46,19 @@ def main() -> None:
     help="Coding agent to install the skill into (omit to configure only).",
 )
 @click.option("--force", is_flag=True, help="Allow downgrading an newer installed version.")
+@click.option(
+    "--plugin",
+    "plugin_form",
+    is_flag=True,
+    help="Register the plugin form (MCP tool provider) in the host's user-level settings "
+    "instead of copying the skill into the project. Nothing is written into PROJECT.",
+)
+@click.option(
+    "--plugin-root",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="secscan checkout the plugin launches from (default: the one this command runs from).",
+)
 @click.option(
     "--commit-artifacts",
     is_flag=True,
@@ -74,6 +90,8 @@ def init_command(
     project: Path,
     agent: str | None,
     force: bool,
+    plugin_form: bool,
+    plugin_root: Path | None,
     commit_artifacts: bool,
     no_init: bool,
     install: str | None,
@@ -81,7 +99,21 @@ def init_command(
     no_input: bool,
 ) -> None:
     """Set up secscan in PROJECT: install the skill (--ai), generate config, check env."""
-    if agent is not None:
+    if plugin_form:
+        if agent is None:
+            raise click.UsageError("--plugin requires --ai <agent>")
+        from installer import plugin as plugin_mod
+        from installer.upgrade import DowngradeRefused
+
+        try:
+            root = plugin_root if plugin_root is not None else plugin_mod.find_plugin_root()
+            registered = plugin_mod.register(agent.lower(), root, force=force)
+        except (plugin_mod.PluginError, DowngradeRefused) as exc:
+            raise click.ClickException(str(exc)) from None
+        click.echo(registered.render())
+        if no_init:
+            return
+    elif agent is not None:
         try:
             result = core.install(
                 project, agent.lower(), force=force, commit_artifacts=commit_artifacts
@@ -194,17 +226,28 @@ def run_command(
 def status_command(project: Path) -> None:
     """Show installed skills and scan state for PROJECT."""
     installs = core.detect_installs(project)
+    from installer import plugin as plugin_mod
+
+    plugin_installs = plugin_mod.read_record()["installs"]
+    if plugin_installs:
+        click.echo("Plugin installs (user level):")
+        for host in sorted(plugin_installs):
+            entry = plugin_installs[host]
+            click.echo(
+                f"  {host:10} v{entry.get('tool_version')}  -> {entry.get('registered_in')}"
+            )
     if not installs:
         click.echo(f"No secscan skill installed in {project}.")
         click.echo(f"Install one with: secscan init {project} --ai <agent>")
-        return
-
-    click.echo(f"Installed in {Path(project).resolve()}:")
-    for manifest in installs:
-        click.echo(
-            f"  {manifest['agent']:10} v{manifest['tool_version']}"
-            f"  invoke: {manifest['invocation']}"
-        )
+        if not plugin_installs:
+            return
+    else:
+        click.echo(f"Installed in {Path(project).resolve()}:")
+        for manifest in installs:
+            click.echo(
+                f"  {manifest['agent']:10} v{manifest['tool_version']}"
+                f"  invoke: {manifest['invocation']}"
+            )
 
     scan_dir = Path(project) / SCAN_DIR_NAME
     if not (scan_dir / "config.yaml").exists():
@@ -272,15 +315,76 @@ def data_command(refresh_eol: bool) -> None:
     sys.exit(scan_cli.cmd_data(args))
 
 
+@main.command("mcp")
+def mcp_command() -> None:
+    """Serve the scan lifecycle as MCP tools over stdio (plugin form; needs [plugin])."""
+    from pipeline import mcp_server
+
+    sys.exit(mcp_server.main([]))
+
+
+@main.group("plugin")
+def plugin_group() -> None:
+    """Maintain the committed plugin files (Agent Plugins, Claude Code, Gemini CLI layouts)."""
+
+
+@plugin_group.command("render")
+@click.option("--root", type=click.Path(file_okay=False, path_type=Path), default=None,
+              help="Plugin root (default: this checkout).")
+def plugin_render(root: Path | None) -> None:
+    """Write the plugin files from the single skill source and TOOL_VERSION."""
+    from installer import plugin as plugin_mod
+
+    try:
+        target = root if root is not None else plugin_mod.find_plugin_root()
+    except plugin_mod.PluginError as exc:
+        raise click.ClickException(str(exc)) from None
+    written = plugin_mod.write_all(target)
+    for relative in written:
+        click.echo(f"wrote: {relative}")
+    if not written:
+        click.echo("plugin files already up to date")
+
+
+@plugin_group.command("check")
+@click.option("--root", type=click.Path(file_okay=False, path_type=Path), default=None,
+              help="Plugin root (default: this checkout).")
+def plugin_check(root: Path | None) -> None:
+    """Exit 1 listing committed plugin files that differ from their render."""
+    from installer import plugin as plugin_mod
+
+    try:
+        target = root if root is not None else plugin_mod.find_plugin_root()
+    except plugin_mod.PluginError as exc:
+        raise click.ClickException(str(exc)) from None
+    stale = plugin_mod.check(target)
+    for relative in stale:
+        click.echo(f"stale: {relative}")
+    if stale:
+        click.echo("run: secscan plugin render")
+        sys.exit(1)
+
+
 @main.command("agents")
 def agents_command() -> None:
-    """List supported coding agents and where each expects skills."""
-    rows = describe()
-    width = max(len(key) for key, _, _ in rows)
-    label_width = max(len(label) for _, label, _ in rows)
+    """List supported coding agents, where each expects skills, and the install forms."""
+    from installer.plugin import describe_forms
+
+    rows = describe_forms()
+    width = max(len(key) for key, _, _, _ in rows)
+    label_width = max(len(label) for _, label, _, _ in rows)
+    path_width = max(len(path) + 1 for _, _, path, _ in rows)
     click.echo("Supported agents (--ai):")
-    for key, label, path in rows:
-        click.echo(f"  {key.ljust(width)}  {label.ljust(label_width)}  {path}/")
+    for key, label, path, forms in rows:
+        click.echo(
+            f"  {key.ljust(width)}  {label.ljust(label_width)}  {(path + '/').ljust(path_width)}  "
+            f"{forms}"
+        )
+    click.echo("")
+    click.echo(
+        "Hosts without a listed plugin form can attach the tool provider from mcp.json to "
+        "any MCP-capable agent."
+    )
 
 
 @main.command("version")

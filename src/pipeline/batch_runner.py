@@ -202,6 +202,18 @@ def plan_round(
     return [s for s in segments if needs_more.get(s["id"], False)]
 
 
+def check_deadline(clock: Callable[[], float], deadline: float | None, stage: str) -> None:
+    """Feature 018 (FR-007): pause at a poll iteration once the deadline has passed.
+
+    Safe here because the batch handle is already in the ledger: the next run
+    resumes the same batch (feature 012, FR-006) rather than resubmitting.
+    """
+    if deadline is not None and clock() >= deadline:
+        from pipeline.llm_client import ScanPaused
+
+        raise ScanPaused(stage, "batch-poll")
+
+
 def check_budgets(requests: list[AnalysisRequest], stage: str) -> None:
     """FR-011: every batch item is budget-checked exactly like an interactive request."""
     for request in requests:
@@ -298,6 +310,9 @@ class BatchRoundRunner:
         self.sleep = sleep or time.sleep
         self.offpeak_window = offpeak_window
         self.stage = stage
+        #: Feature 018 cooperative deadline (clock domain); checked once per poll
+        #: iteration — the ledger carries the batch across the pause.
+        self.deadline: float | None = None
         self.batch_available = True
         #: Coverage notes raised by the runner (already reported live); run.py merges
         #: them into the report so terminal and report cannot disagree.
@@ -527,8 +542,12 @@ class BatchRoundRunner:
 
     def _wait(self, pending: list[_Pending]) -> None:
         schedule = poll_schedule()
+        polled = False
         while any(not p.record.terminal for p in pending):
+            if polled:  # at least one poll per call, so every call makes progress
+                check_deadline(self.clock, self.deadline, self.stage)
             interval = next(schedule)
+            polled = True
             for pend in pending:
                 if pend.record.terminal:
                     continue

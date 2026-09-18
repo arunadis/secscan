@@ -74,6 +74,24 @@ For CI or other unattended setups, useful flags: `--no-init` (skill only, no
 config), `--commit-artifacts` (opt scan artifacts *into* git; default is to
 gitignore `.secscan/`), and the tool-install flags described next.
 
+### Alternative: install as a plugin (once, for every project)
+
+Instead of copying the skill into each project, register secscan's MCP tool
+provider once at user level and let your host drive the scan through tools:
+
+```bash
+secscan init /path/to/your/project --ai cursor --plugin   # cursor | copilot | devin | claude | gemini | windsurf
+```
+
+This writes the host's user-level MCP configuration (or runs the host's own CLI for
+Claude Code and Gemini), records the install in `~/.config/secscan/plugin-installs.json`,
+provisions the `plugin` extra with `uv sync --extra plugin`, and writes **nothing** into
+the project. To load the full plugin (skill + tools) use the host's own installer on
+this checkout — `devin plugins install --local .`, `gemini extensions install .`,
+`claude --plugin-dir .`, or Cursor/Copilot's "install plugin from path". Windsurf
+gets the tools only. Details, per-host table and the precedence rule when a project
+also has a skill install: [Agent integration](agent-integration.md#two-install-forms).
+
 ## 3. External tools (optional)
 
 secscan can integrate `semgrep`, `gitleaks`, `osv-scanner`, `trivy`, `npm audit`,

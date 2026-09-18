@@ -382,3 +382,18 @@ Related environment variables that are *inputs*, not config:
 |----------|---------|
 | `NVD_API_KEY` | Un-throttles OWASP Dependency-Check's NVD data sync. Detected by name only; never stored or printed. |
 | `<api_key_env>` | Whatever variable your `llm.endpoint.api_key_env` names — the key value itself. |
+
+## `plugin` — bounded runs for the plugin form
+
+```yaml
+plugin:
+  run_bound_s: 45
+```
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `plugin.run_bound_s` | integer 5–3600 | `45` | Seconds a single `secscan_run` tool call may work before pausing at the next checkpoint and returning `in_progress`. Only the MCP tool provider reads it; the command line never bounds a run. Override per call with the tool argument `time_budget_s`. |
+
+Environment override: `SECSCAN_PLUGIN_RUN_BOUND_S`. A conservative default under common
+host tool-call limits; raise it for hosts with generous limits. See
+[Agent integration](agent-integration.md#plugin-form-how-a-run-behaves).

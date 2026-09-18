@@ -258,3 +258,18 @@ def test_context_packets_are_numbered_and_within_budget(tmp_path: Path) -> None:
             if not first:
                 continue  # an empty file carries nothing to number
             assert "|" in first[:8], f"unnumbered source in {path.name} ({name}): {first!r}"
+
+
+# --------------------------------------------------- feature 018: lock is not an artifact
+
+
+def test_run_lock_is_absent_after_a_completed_run(tmp_path: Path) -> None:
+    """`run.lock` exists only while a scan runs; it never joins the artifact set and
+    the two-run comparison above (which globs `*.json`) can never see it."""
+    from pipeline.state import RUN_LOCK_NAME
+    from tests.fixtures.single_repo_shop import build
+
+    root = build(tmp_path / "shop")
+    _scan(root)
+    assert not (root / ".secscan" / RUN_LOCK_NAME).exists()
+    assert not any(p.name == RUN_LOCK_NAME for p in (root / ".secscan").rglob("*"))

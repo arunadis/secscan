@@ -20,7 +20,9 @@ history with `--commit-artifacts`.
 ├── context-packets/<id>-l<level>.json   post-redaction, budgeted packets
 ├── handoff/
 │   ├── requests/<request-id>.json      prompt + bounded packet (agent mode)
-│   └── responses/<request-id>.json     agent's schema-conforming answers
+│   └── responses/<request-id>.json     agent's schema-conforming answers — written by the
+│                                       agent (skill form) or by `secscan_submit_answer`
+│                                       (plugin form); identical either way
 ├── analysis/answers/<request-id>.json  persisted model answers (endpoint mode) — resumption
 │                                       state, not an artifact: safe to delete, forces re-analysis
 ├── findings/
@@ -37,7 +39,8 @@ history with `--commit-artifacts`.
 ├── state.json                  checkpoints, file hashes (resume + change detection),
 │                               and meta.analysis_batches — the provider batch ledger
 ├── usage.json                  tokens per stage/tier, savings vs baseline
-└── scan.log                    progress trace of the latest run (diagnostic, NOT an artifact)
+├── scan.log                    progress trace of the latest run (diagnostic, NOT an artifact)
+└── run.lock                    present only WHILE a scan runs (exclusive lock, NOT an artifact)
 ```
 
 ## How artifacts are used
@@ -129,6 +132,17 @@ schema, carries timing that legitimately differs between runs, and is excluded
 from the byte-identical determinism comparison. It obeys the same content rule as
 everything else under `.secscan/` — identifiers, paths, counts, durations and
 report wording only — and is included in the credential redaction sweep.
+
+## The run lock
+
+`run.lock` exists only while a scan is running. It records the holder (`pid`,
+`driver` — `cli` or `plugin` — `scan_id`, `started_at`, `tool_version`) so a second
+`secscan run` or `secscan_run` against the same root is refused with an explicit
+"scan already running" message instead of interleaving writes. It is removed when the
+run exits by any path, a lock whose process is no longer alive is reclaimed
+automatically, and — like `scan.log` — it is not an artifact: no envelope, not
+`*.json`, never present after a completed run, excluded from the determinism
+comparison.
 
 ## What never lands in an artifact
 

@@ -278,3 +278,44 @@ def test_hardcoded_credential_is_still_reported_as_a_finding(scanned: Path) -> N
         for finding in (json.loads(path.read_text()).get("payload") or {}).get("findings") or []
     }
     assert "CWE-798" in cwes, "the hard-coded credential is no longer reported at all"
+
+
+# -------------------------------------- feature 018: plugin files and tool results
+
+
+def test_committed_plugin_files_carry_no_credential() -> None:
+    """The rendered plugin package is shipped to every host that installs it."""
+    from installer.plugin import RENDERED_FILES
+
+    repo = Path(__file__).resolve().parents[2]
+    redactor = Redactor()
+    marker = re.compile(r"\[(?:REDACTED|BLOCKED):[^\]]*\]")
+    for relative in RENDERED_FILES:
+        text = (repo / relative).read_text()
+        for secret in SEEDED_SECRETS:
+            assert secret not in text, relative
+        assert not redactor.scan(marker.sub("***", text)), relative
+
+
+def test_mcp_tool_results_carry_no_credential(scanned: Path) -> None:
+    """Every string a host can receive from the tool provider over a scanned root."""
+    from pipeline import mcp_server
+
+    redactor = Redactor()
+    marker = re.compile(r"\[(?:REDACTED|BLOCKED):[^\]]*\]")
+    w = str(scanned)
+    results = [
+        mcp_server.call_tool("status", {"workdir": w}),
+        mcp_server.call_tool("list_requests", {"workdir": w}),
+        mcp_server.call_tool("report", {"workdir": w, "format": "markdown"}),
+        mcp_server.call_tool("report", {"workdir": w, "format": "json"}),
+    ]
+    tmp_root = str(scanned.resolve().parent)
+    for result in results:
+        for _key, value in _strings(result):
+            if value.startswith(("/", "report: ")):
+                continue  # paths minted by the tool itself, checked literally below
+            cleaned = marker.sub("***", value).replace(tmp_root, "/TMP")
+            assert not redactor.scan(cleaned), value[:120]
+        for secret in SEEDED_SECRETS:
+            assert secret not in json.dumps(result)

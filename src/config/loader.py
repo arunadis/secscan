@@ -35,7 +35,8 @@ VALID_TOGGLES = ("auto", True, False)
 #: Declared config surface. Anything outside this is rejected (strict schema).
 _ALLOWED: dict[str, tuple[str, ...]] = {
     "": ("version", "workspace", "llm", "execution_policy", "budgets", "profiles",
-         "scanners", "redaction", "tooling", "output", "triage", "business_flow"),
+         "scanners", "redaction", "tooling", "output", "triage", "business_flow", "plugin"),
+    "plugin": ("run_bound_s",),
     "triage": ("enabled", "min_severity_band", "include_unverified"),
     "business_flow": ("enabled", "applicability_mode", "declared_regimes"),
     "workspace": ("members", "integrations"),
@@ -81,6 +82,11 @@ VALID_SEVERITY_BANDS = ("Low", "Medium", "High", "Critical")
 #: Progress output levels for `run` (feature 011). Mirrors pipeline.progress.OutputLevel;
 #: kept as data here so config validation needs no pipeline import.
 VALID_OUTPUT_LEVELS = ("quiet", "default", "verbose")
+#: Bounded `run` for the plugin tool provider (feature 018, FR-007): seconds a single
+#: tool call may work before pausing at the next checkpoint. Conservative default
+#: under common host tool-call limits; a config key because those limits differ.
+PLUGIN_RUN_BOUND_DEFAULT_S = 45
+PLUGIN_RUN_BOUND_RANGE_S = (5, 3600)
 
 
 class ConfigError(ValueError):
@@ -195,6 +201,11 @@ class Config:
     def output_level(self) -> str:
         """Progress output level for `run`: quiet | default | verbose (feature 011)."""
         return str(self._get("output", "level", default="default"))
+
+    @property
+    def plugin_run_bound_s(self) -> int:
+        """Seconds a plugin `run` call may work before pausing (feature 018, FR-007)."""
+        return int(self._get("plugin", "run_bound_s", default=PLUGIN_RUN_BOUND_DEFAULT_S))
 
     @property
     def triage_enabled(self) -> str:
@@ -364,6 +375,7 @@ def apply_env_overrides(raw: dict[str, Any], environ: dict[str, str] | None = No
         "LLM": ("llm",),
         "TOOLING": ("tooling",),
         "OUTPUT": ("output",),
+        "PLUGIN": ("plugin",),
         "TRIAGE": ("triage",),
         "BUSINESS_FLOW": ("business_flow",),
     }
@@ -714,6 +726,19 @@ def validate_config(raw: dict[str, Any]) -> list[str]:
         if level not in VALID_OUTPUT_LEVELS:
             problems.append(
                 f"output.level must be one of: {', '.join(VALID_OUTPUT_LEVELS)} (got {level!r})"
+            )
+
+    # --------------------------------------------------------------- plugin
+    plugin = raw.get("plugin") or {}
+    if not isinstance(plugin, dict):
+        problems.append("plugin must be a mapping")
+    else:
+        bound = plugin.get("run_bound_s", PLUGIN_RUN_BOUND_DEFAULT_S)
+        low, high = PLUGIN_RUN_BOUND_RANGE_S
+        if not isinstance(bound, int) or isinstance(bound, bool) or not (low <= bound <= high):
+            problems.append(
+                f"plugin.run_bound_s must be an integer between {low} and {high} "
+                f"(found {bound!r})"
             )
 
     # ------------------------------------------------------------- workspace

@@ -169,3 +169,88 @@ def test_scan_handles_repository_10x_the_context_window(tmp_path: Path) -> None:
     for packet in result.context_packets:
         assert packet["estimated_tokens"] <= context_window
     assert result.reported_findings, "seeded flaws at scale should still be found"
+
+
+@pytest.mark.slow
+def test_bounded_tool_runs_settle_the_large_repository(tmp_path: Path) -> None:
+    """Feature 018, SC-005: through the plugin tool provider with the default 45 s bound,
+    every `secscan_run` call returns within bound + one un-checkpointable stage, the
+    scan settles over repeated calls with no lost work, and the artifacts equal a
+    single uninterrupted CLI run of the same repository."""
+    import json
+    import re
+    import time
+
+    from pipeline import mcp_server
+    from tests.fixtures.generate_large_repo import build_for_budget
+
+    context_window = 12000
+    cli_repo = build_for_budget(tmp_path / "cli", context_window_tokens=context_window, factor=10)
+    tool_repo = build_for_budget(tmp_path / "tool", context_window_tokens=context_window, factor=10)
+    for repo in (cli_repo, tool_repo):
+        write_config(repo, {"budgets": {"max_context_tokens": context_window},
+                            "triage": {"enabled": "off"}})
+
+    run_mod.run_scan(cli_repo, responder=oracle_responder, full=True)
+
+    w = str(tool_repo)
+    bound = 45
+    longest_call = 0.0
+    calls = 0
+    for _ in range(200):
+        started = time.monotonic()
+        res = mcp_server.call_tool("run", {"workdir": w, "time_budget_s": bound})
+        longest_call = max(longest_call, time.monotonic() - started)
+        calls += 1
+        if res["state"] in ("ok", "report_defect"):
+            break
+        if res["state"] == "in_progress":
+            continue
+        assert res["state"] == "awaiting_reasoning", res
+        for row in mcp_server.call_tool("list_requests", {"workdir": w})["requests"]:
+            if row["answered"]:
+                continue
+            got = mcp_server.call_tool(
+                "get_request", {"workdir": w, "request_id": row["request_id"]}
+            )
+
+            class _Shim:
+                payload = got["request"]["context_packet"]
+
+            sub = mcp_server.call_tool(
+                "submit_answer",
+                {"workdir": w, "request_id": row["request_id"],
+                 "content": oracle_responder(_Shim())},
+            )
+            assert sub["state"] == "ok", sub
+    else:
+        raise AssertionError("tool-driven scan did not settle")
+    assert res["state"] in ("ok", "report_defect")
+    # Bound + one un-checkpointable stage: generous allowance for the deterministic tail.
+    assert longest_call < bound + 300, f"a run call held the host for {longest_call:.0f}s"
+    assert calls >= 1
+
+    def artifacts(root: Path) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for path in sorted((root / ".secscan").rglob("*.json")):
+            # handoff/ exists only on the agent-mediated path (the CLI reference
+            # answered in-process); everything the scan *produced* is compared.
+            if path.name == "state.json" or "handoff" in path.parts:
+                continue
+            text = path.read_text()
+            for prefix in (str(root.resolve()), str(root)):
+                text = text.replace(prefix, "<ROOT>")
+            doc = json.loads(text)
+            if isinstance(doc, dict):
+                doc.pop("scan_id", None)
+                if isinstance(doc.get("payload"), dict):
+                    doc["payload"].pop("scan_id", None)
+            rel = path.relative_to(root / ".secscan").as_posix()
+            rel = re.sub(r"\d{8}T\d{6}Z-[0-9a-f]{6}", "<SCAN-ID>", rel)
+            out[rel] = json.dumps(doc, sort_keys=True)
+        return out
+
+    left, right = artifacts(cli_repo), artifacts(tool_repo)
+    assert set(left) == set(right)
+    for key in sorted(left):
+        assert left[key] == right[key], f"{key} differs between CLI and bounded tool runs"

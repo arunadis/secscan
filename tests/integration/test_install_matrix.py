@@ -335,3 +335,129 @@ def test_scan_without_config_directs_user_to_init(project: Path) -> None:
     with pytest.raises(ConfigNotFound) as exc:
         run_mod.run_scan(project)
     assert "init" in str(exc.value)
+
+
+# ------------------------------------------------- feature 018: skill form is frozen
+
+
+@pytest.mark.parametrize("agent", AGENT_KEYS)
+def test_skill_render_matches_golden(agent: str) -> None:
+    """The SKILL.md driver split (feature 018, FR-001/FR-018) is a refactor: every
+    adapter's rendered entrypoint is byte-identical to the pre-split capture."""
+    golden = Path(__file__).parent.parent / "fixtures" / "skill_renders" / f"{agent}.golden"
+    core = (installer._SKILL_CORE / "SKILL.md").read_text()
+    rendered = get_adapter(agent).render_entrypoint(core, installer.SKILL_NAME)
+    assert rendered == golden.read_text(), f"{agent} skill render drifted from golden"
+
+
+# ------------------------------------------------ feature 018: plugin form via the CLI
+
+PLUGIN_AGENTS = [k for k, a in ADAPTERS.items() if a.plugin_layout != "none"]
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _plugin_env(tmp_path: Path) -> tuple[dict[str, str], Path]:
+    """Redirect HOME and provide fake host CLIs (claude/gemini/uv) on PATH."""
+    import stat
+
+    home = tmp_path / "home"
+    home.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name in ("claude", "gemini", "uv"):
+        script = bin_dir / name
+        script.write_text(f'#!/bin/sh\necho "$@" > "{bin_dir}/{name}.argv"\nexit 0\n')
+        script.chmod(script.stat().st_mode | stat.S_IXUSR)
+    return {"HOME": str(home), "PATH": f"{bin_dir}:/usr/bin:/bin"}, home
+
+
+@pytest.mark.parametrize("agent", sorted(PLUGIN_AGENTS))
+def test_plugin_form_writes_nothing_into_the_project(project: Path, tmp_path: Path, agent: str,
+                                                     monkeypatch) -> None:
+    """FR-013/FR-014/FR-017: `--plugin` registers at user level only."""
+    import subprocess
+
+    from click.testing import CliRunner
+
+    from installer.cli import main
+
+    env, home = _plugin_env(tmp_path)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    subprocess.run(["git", "init", "-q", str(project)], check=True)
+    before = sorted(p.relative_to(project) for p in project.rglob("*") if ".git" not in p.parts)
+
+    result = CliRunner().invoke(
+        main,
+        ["init", str(project), "--ai", agent, "--plugin", "--no-init",
+         "--plugin-root", str(REPO_ROOT)],
+    )
+    assert result.exit_code == 0, result.output
+
+    after = sorted(p.relative_to(project) for p in project.rglob("*") if ".git" not in p.parts)
+    assert after == before, f"plugin install wrote into the project: {set(after) - set(before)}"
+    status = subprocess.run(["git", "status", "--porcelain"], cwd=project,
+                            capture_output=True, text=True).stdout
+    # Only the fixture's own untracked source shows; no dotfile/dir was added.
+    assert [line.split()[-1] for line in status.splitlines()] == ["src/"], status
+    assert not any(project.glob(".*/skills")), "no skill directory"
+    assert installer.detect_installs(project) == []
+
+    assert f"Registered secscan v{installer.TOOL_VERSION} as a plugin for" in result.output
+    assert "plugin root:" in result.output and "registered:" in result.output
+    assert "nothing was written into the project" in result.output
+    record = json.loads((home / ".config" / "secscan" / "plugin-installs.json").read_text())
+    assert record["installs"][agent]["form"] == "plugin"
+
+
+def test_plugin_form_default_is_unchanged_skill_form(project: Path) -> None:
+    """Without --plugin the installer is byte-for-byte today's behaviour (FR-013)."""
+    from click.testing import CliRunner
+
+    from installer.cli import main
+
+    result = CliRunner().invoke(main, ["init", str(project), "--ai", "claude", "--no-init"])
+    assert result.exit_code == 0, result.output
+    manifest = installer.installed_manifest(project, "claude")
+    assert manifest and manifest["agent"] == "claude"
+    entry = (project / ".claude" / "skills" / "secscan" / "SKILL.md").read_text()
+    golden = Path(__file__).parent.parent / "fixtures" / "skill_renders" / "claude.golden"
+    assert entry == golden.read_text()
+
+
+def test_plugin_form_rejects_agents_target(project: Path, tmp_path: Path, monkeypatch) -> None:
+    from click.testing import CliRunner
+
+    from installer.cli import main
+
+    env, _home = _plugin_env(tmp_path)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    result = CliRunner().invoke(
+        main, ["init", str(project), "--ai", "agents", "--plugin", "--no-init",
+               "--plugin-root", str(REPO_ROOT)],
+    )
+    assert result.exit_code != 0
+    assert "no plugin form" in result.output
+
+
+def test_agents_command_lists_install_forms() -> None:
+    from click.testing import CliRunner
+
+    from installer.cli import main
+
+    result = CliRunner().invoke(main, ["agents"])
+    assert result.exit_code == 0
+    assert "skill, plugin (MCP only)" in result.output  # windsurf
+    assert "skill, plugin\n" in result.output or "skill, plugin " in result.output
+    assert "attach the tool provider from mcp.json" in result.output
+
+
+def test_plugin_check_command_passes_on_a_fresh_checkout() -> None:
+    from click.testing import CliRunner
+
+    from installer.cli import main
+
+    result = CliRunner().invoke(main, ["plugin", "check", "--root", str(REPO_ROOT)])
+    assert result.exit_code == 0, result.output

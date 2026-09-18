@@ -215,3 +215,34 @@ def test_manifest_inventory_matches_installed_files(
     manifest = json.loads((skill_dir / installer.MANIFEST_NAME).read_text())
     for relative in manifest["files"]:
         assert (skill_dir / relative).exists(), relative
+
+
+# ---------------------------------------------- feature 018: skill form needs no `mcp`
+
+
+def test_installed_payload_has_no_mcp_dependency(installed_shop: tuple[Path, Path]) -> None:
+    """FR-023: the copied payload imports the handler module and drives `--oneshot`
+    without the plugin extra; the serving layer is never imported implicitly."""
+    repo, skill_dir = installed_shop
+    code = "\n".join(
+        [
+            "import sys, builtins",
+            "real_import = builtins.__import__",
+            "def guard(name, *a, **k):",
+            "    if name == 'mcp' or name.startswith('mcp.'):",
+            "        raise ImportError('mcp must not be imported by the payload')",
+            "    return real_import(name, *a, **k)",
+            "builtins.__import__ = guard",
+            "import pipeline.mcp_server as m",
+            "import pipeline.scan_cli as c",
+            "assert 'mcp' not in sys.modules",
+            "assert 'mcp' not in c.build_parser().format_help(), 'payload CLI advertises mcp'",
+            f"code = m.main(['--oneshot', 'status', '{{\"workdir\": \"{repo}\"}}'])",
+            "assert code == 0",
+        ]
+    )
+    proc = run_in_payload(skill_dir, code, cwd=repo)
+    assert proc.returncode == 0, proc.stderr
+    doc = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert doc["state"] in ("ok", "not_ready")
+    assert doc["driver"]["form"] == "skill", "the payload's own driver reports the skill form"

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,6 +37,13 @@ LOG_FILE_NAME = "scan.log"
 ANSWERS_DIR = "analysis/answers"
 #: ``state.json`` meta key holding the provider batch ledger (feature 012).
 BATCH_LEDGER_META = "analysis_batches"
+#: Exclusive run lock for a scan root (feature 018). Not an artifact: not ``*.json``,
+#: removed on exit, stale-pid aware. Keys the "scan already running" refusal that
+#: the CLI and the plugin tool provider share.
+RUN_LOCK_NAME = "run.lock"
+#: User-level record of plugin-form installs (feature 018); lives under
+#: ``user_config_dir()``, never inside a project.
+PLUGIN_INSTALLS_RECORD = "plugin-installs.json"
 
 #: Ordered pipeline stages. Resume walks this list and skips stages whose
 #: recorded resume key still matches.
@@ -433,6 +441,110 @@ class ArtifactStore:
     def set_meta(self, key: str, value: Any) -> None:
         self._state.setdefault("meta", {})[key] = value
         self.save_state()
+
+
+def user_config_dir(environ: dict[str, str] | None = None) -> Path:
+    """Per-user secscan configuration directory (feature 018).
+
+    ``$XDG_CONFIG_HOME/secscan`` (default ``~/.config/secscan``) on POSIX,
+    ``%APPDATA%\\secscan`` on Windows. Never inside a project.
+    """
+    env = environ if environ is not None else os.environ
+    if os.name == "nt" and env.get("APPDATA"):
+        base = Path(env["APPDATA"])
+    elif env.get("XDG_CONFIG_HOME"):
+        base = Path(env["XDG_CONFIG_HOME"])
+    else:
+        home = env.get("HOME") or env.get("USERPROFILE")
+        base = (Path(home) if home else Path.home()) / ".config"
+    return base / "secscan"
+
+
+# ------------------------------------------------------------------ run lock
+
+
+class ScanLocked(RuntimeError):
+    """Another scan holds the root's run lock (feature 018, FR-008)."""
+
+    def __init__(self, lock: dict[str, Any], path: Path) -> None:
+        self.lock = lock
+        self.path = path
+        started = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(float(lock.get("started_at") or 0))
+        )
+        super().__init__(
+            f"scan already running in {path.parent.parent} (pid {lock.get('pid')}, "
+            f"started {started}, via {lock.get('driver', 'unknown')}); wait or remove "
+            f"{path} if that process is gone"
+        )
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def read_run_lock(store_dir: Path) -> dict[str, Any] | None:
+    """The live lock for ``store_dir`` or ``None``; a dead-pid lock reads as absent."""
+    path = Path(store_dir) / RUN_LOCK_NAME
+    try:
+        lock = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(lock, dict) or not _pid_alive(int(lock.get("pid") or 0)):
+        return None
+    return lock
+
+
+def acquire_run_lock(store_dir: Path, *, driver: str, scan_id: str) -> Path:
+    """Create ``run.lock`` exclusively; reclaim a stale one; raise :class:`ScanLocked`."""
+    store_dir = Path(store_dir)
+    store_dir.mkdir(parents=True, exist_ok=True)
+    path = store_dir / RUN_LOCK_NAME
+    payload = json.dumps(
+        {
+            "driver": driver,
+            "pid": os.getpid(),
+            "scan_id": scan_id,
+            "started_at": time.time(),
+            "tool_version": TOOL_VERSION,
+        },
+        sort_keys=True,
+    )
+    for _attempt in range(2):
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        except FileExistsError:
+            live = read_run_lock(store_dir)
+            if live is not None:
+                raise ScanLocked(live, path) from None
+            path.unlink(missing_ok=True)  # stale: reclaim and retry once
+            continue
+        with os.fdopen(fd, "w") as handle:
+            handle.write(payload + "\n")
+        return path
+    live = read_run_lock(store_dir)
+    raise ScanLocked(live or {}, path)
+
+
+def release_run_lock(store_dir: Path) -> None:
+    """Remove the lock if this process holds it."""
+    path = Path(store_dir) / RUN_LOCK_NAME
+    try:
+        lock = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return
+    if isinstance(lock, dict) and int(lock.get("pid") or 0) == os.getpid():
+        path.unlink(missing_ok=True)
 
 
 class SchemaVersionMismatch(RuntimeError):

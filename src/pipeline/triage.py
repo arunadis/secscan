@@ -480,6 +480,7 @@ def run_batch(
     window_hours: float,
     clock: Any = None,
     sleep: Any = None,
+    deadline: float | None = None,
 ) -> dict[str, TriageOutcome]:
     """Provider-batch execution of the triage round (research R3, contracts §7).
 
@@ -493,6 +494,7 @@ def run_batch(
     from pipeline.batch_runner import (
         BatchRecord,
         check_budgets,
+        check_deadline,
         classify_items,
         group_and_split,
         poll_schedule,
@@ -602,8 +604,12 @@ def run_batch(
 
     # Wait out the round, collect results, fall back to interactive per failure.
     schedule = poll_schedule()
+    polled = False
     while any(not record.terminal for record in pending):
+        if polled:  # at least one poll per call, so every call makes progress
+            check_deadline(clock, deadline, STAGE)
         interval = next(schedule)
+        polled = True
         for record in pending:
             if record.terminal:
                 continue

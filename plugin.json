@@ -1,0 +1,15 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "description": "Perform a hierarchical security assessment of a large codebase or multi-repository workspace while keeping LLM context bounded. Use when the user asks to scan for vulnerabilities, run a security review, audit a repository, triage scanner findings, or check a codebase for security issues.",
+  "keywords": [
+    "security",
+    "sast",
+    "vulnerability",
+    "code-review",
+    "cwe"
+  ],
+  "license": "Apache-2.0",
+  "name": "secscan",
+  "repository": "https://github.com/arunadis/secscan",
+  "version": "0.1.0"
+}
